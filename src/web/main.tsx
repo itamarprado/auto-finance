@@ -1,5 +1,6 @@
 import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { Access } from './access.tsx'
 import './style.css'
 
 const messages = {
@@ -8,7 +9,7 @@ const messages = {
   unavailable: 'Banco de dados indisponível.',
 }
 
-function App() {
+function DatabaseStatus() {
   const [status, setStatus] = useState<keyof typeof messages>('loading')
 
   useEffect(() => {
@@ -32,9 +33,18 @@ function App() {
   }, [])
 
   return (
+    <p className="database-status" role="status" data-state={status}>{messages[status]}</p>
+  )
+}
+
+function App() {
+  return (
     <main className="panel">
-      <h1>Auto Finance</h1>
-      <p role="status" data-state={status}>{messages[status]}</p>
+      <header className="panel-header">
+        <h1>Auto Finance</h1>
+        <DatabaseStatus />
+      </header>
+      <Access />
     </main>
   )
 }

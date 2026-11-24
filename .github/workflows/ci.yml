@@ -116,7 +116,8 @@ jobs:
       - name: Executar testes no navegador
         id: e2e
         env:
-          DATABASE_URL: postgresql://auto_finance_api:ci-api@127.0.0.1:54329/auto_finance
+          TEST_DATABASE_URL: postgresql://auto_finance_api:ci-api@127.0.0.1:54329/auto_finance
+          TEST_DATABASE_MIGRATION_URL: postgresql://auto_finance_migrator:ci-migration@127.0.0.1:54329/auto_finance
         run: npm run test:e2e
       - name: Executar análise passiva com OWASP ZAP
         id: zap
