@@ -24,4 +24,4 @@ rules:
     languages: [typescript, javascript]
     severity: ERROR
     message: Mantenha credenciais na configuração do servidor.
-    pattern-regex: '(?i)\bVITE_[A-Z0-9_]*(SECRET|PASSWORD|TOKEN|API_KEY|DATABASE_URL)[A-Z0-9_]*\b'
+    pattern-regex: '(?i)\bVITE_[A-Z0-9_]*(SECRET|PASSWORD|TOKEN|API_KEY|DATABASE_(?:MIGRATION_)?URL)[A-Z0-9_]*\b'

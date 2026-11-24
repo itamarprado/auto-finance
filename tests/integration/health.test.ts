@@ -11,7 +11,7 @@ afterEach(async () => {
 
 describe('GET /api/health', () => {
   it('retorna sucesso depois de consultar um PostgreSQL real', async () => {
-    app = createApp(readConfig(process.env))
+    app = createApp(readConfig({ DATABASE_URL: process.env.TEST_DATABASE_URL }))
 
     const response = await app.inject({ url: '/api/health' })
 
