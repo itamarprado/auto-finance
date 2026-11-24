@@ -1,0 +1,27 @@
+rules:
+  - id: auto-finance-dynamic-code
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: Evite executar código construído em tempo de execução.
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+  - id: auto-finance-unescaped-html
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: Use a renderização padrão do React para conteúdo exibido.
+    pattern-regex: '\bdangerouslySetInnerHTML\s*='
+  - id: auto-finance-sql-interpolation
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: Envie valores separadamente com parâmetros de consulta do PostgreSQL.
+    patterns:
+      - pattern: $DB.query($SQL, ...)
+      - metavariable-regex:
+          metavariable: $SQL
+          regex: '^\x60[^\x60]*\$\{'
+  - id: auto-finance-public-env-secret
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: Mantenha credenciais na configuração do servidor.
+    pattern-regex: '(?i)\bVITE_[A-Z0-9_]*(SECRET|PASSWORD|TOKEN|API_KEY|DATABASE_URL)[A-Z0-9_]*\b'

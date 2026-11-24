@@ -1,0 +1,10 @@
+title = "Auto Finance"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "auto-finance-sensitive-environment"
+description = "Credencial atribuída a uma variável sensível do Auto Finance"
+regex = '''(?i)\b(?:DATABASE_URL|POSTGRES_PASSWORD|PLUGGY_CLIENT_SECRET)\s*=\s*["']?([^\s"'\x60]{12,})'''
+secretGroup = 1

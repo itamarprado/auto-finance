@@ -1,0 +1,154 @@
+name: Validação da base
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-security:
+    name: Código e segredos
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Detectar segredos com Gitleaks
+        run: |
+          tool_dir="$RUNNER_TEMP/gitleaks"
+          mkdir -p "$tool_dir/fixture"
+          archive="$tool_dir/gitleaks.tar.gz"
+          curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 90 --retry 2 \
+            -o "$archive" https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          printf '%s  %s\n' 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$tool_dir" gitleaks
+          printf 'PLUGGY_CLIENT_%s=%s\n' SECRET synthetic-credential-for-ci > "$tool_dir/fixture/synthetic.env"
+          fixture_status=0
+          "$tool_dir/gitleaks" dir --config .gitleaks.toml --redact=100 --exit-code=23 "$tool_dir/fixture" || fixture_status=$?
+          test "$fixture_status" -eq 23
+          "$tool_dir/gitleaks" git --config .gitleaks.toml --redact=100 --log-opts=HEAD .
+      - name: Analisar código com Semgrep CE
+        run: |
+          image='docker.io/semgrep/semgrep:1.186.0@sha256:6e1b04340e60e910fbb4ddbf3c857ab0918f064417ad5ac530014ccb3cf8c8f1'
+          docker pull "$image"
+          docker run --rm --pull=never --network none --cap-drop ALL \
+            --security-opt no-new-privileges --read-only --tmpfs /tmp \
+            --user "$(id -u):$(id -g)" --env HOME=/tmp --env XDG_CACHE_HOME=/tmp \
+            --env SEMGREP_SETTINGS_FILE=/tmp/semgrep-settings.yml \
+            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src --entrypoint semgrep "$image" \
+            scan --config .semgrep.yml --metrics=off --disable-version-check --error src
+
+  verify:
+    name: Testes e segurança
+    needs: static-security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17.12@sha256:156d40cfa063d6babb15d329a8e15b26a8d0690ebb6084c956084f3b025c3b30
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: auto_finance
+        ports:
+          - "127.0.0.1:54329:5432"
+        options: >-
+          --health-cmd "pg_isready -U ci -d auto_finance"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Preparar Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts --no-audit
+      - name: Verificar dependências com npm audit
+        id: audit
+        run: npm run security:deps
+      - run: npm run lint
+        id: lint
+      - run: npm run typecheck
+        id: types
+      - run: npm run build
+        id: build
+      - run: npm run test:unit
+        id: unit
+      - run: npm run test:integration
+        id: integration
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:54329/auto_finance
+      - name: Instalar Chromium pelo lockfile
+        run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Executar testes no navegador
+        id: e2e
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:54329/auto_finance
+        run: npm run test:e2e
+      - name: Executar análise passiva com OWASP ZAP
+        id: zap
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:54329/auto_finance
+        run: |
+          archive="$RUNNER_TEMP/zap.zip"
+          curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 180 --retry 2 \
+            -o "$archive" https://github.com/zaproxy/zaproxy/releases/download/v2.17.0/ZAP_2.17.0_Crossplatform.zip
+          printf '%s  %s\n' 94c8f767b1c2e94f0db66b3ae56514d5e3f5a728ee1b6c798e0c8fe2d61fbff0 "$archive" | sha256sum --check
+          unzip -q "$archive" -d "$RUNNER_TEMP"
+          PORT=3107 node dist/server/main.js --serve-web > "$RUNNER_TEMP/auto-finance.log" 2>&1 &
+          app_pid=$!
+          trap 'kill "$app_pid" 2>/dev/null || true' EXIT
+          curl -fsS --max-time 3 --retry 10 --retry-max-time 15 --retry-connrefused --retry-delay 1 http://127.0.0.1:3107/api/health
+          export ZAP_REPORT_DIR="$RUNNER_TEMP/zap-report"
+          mkdir -p "$ZAP_REPORT_DIR"
+          zap_status=0
+          "$JAVA_HOME_21_X64/bin/java" -Xmx768m -jar "$RUNNER_TEMP/ZAP_2.17.0/zap-2.17.0.jar" \
+            -cmd -silent -notel -port 43117 -dir "$RUNNER_TEMP/zap-home" \
+            -autorun "$GITHUB_WORKSPACE/security/zap-smoke.yaml" || zap_status=$?
+          node - "$ZAP_REPORT_DIR/zap-passive.json" <<'NODE'
+          const report = require(process.argv[2])
+          const alerts = report.site.flatMap(site => site.alerts)
+          console.log(`Alertas da análise passiva: ${alerts.length}`)
+          for (const { alert, riskdesc } of alerts) console.log(`- ${riskdesc} | ${alert}`)
+          NODE
+          exit "$zap_status"
+      - name: Publicar resumo das verificações
+        if: ${{ !cancelled() }}
+        env:
+          AUDIT: ${{ steps.audit.outcome }}
+          LINT: ${{ steps.lint.outcome }}
+          TYPES: ${{ steps.types.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          UNIT: ${{ steps.unit.outcome }}
+          INTEGRATION: ${{ steps.integration.outcome }}
+          E2E: ${{ steps.e2e.outcome }}
+          ZAP: ${{ steps.zap.outcome }}
+        run: |
+          {
+            printf '## Testes e segurança\n\n'
+            printf -- '- npm audit: %s\n- Lint: %s\n- Tipos: %s\n- Build: %s\n' "$AUDIT" "$LINT" "$TYPES" "$BUILD"
+            printf -- '- Unitários: %s\n- Integração: %s\n- Navegador: %s\n- ZAP passivo: %s\n' "$UNIT" "$INTEGRATION" "$E2E" "$ZAP"
+          } >> "$GITHUB_STEP_SUMMARY"
