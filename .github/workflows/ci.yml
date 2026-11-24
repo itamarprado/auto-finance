@@ -51,7 +51,7 @@ jobs:
             --user "$(id -u):$(id -g)" --env HOME=/tmp --env XDG_CACHE_HOME=/tmp \
             --env SEMGREP_SETTINGS_FILE=/tmp/semgrep-settings.yml \
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src --entrypoint semgrep "$image" \
-            scan --config .semgrep.yml --metrics=off --disable-version-check --error src
+            scan --config .semgrep.yml --metrics=off --disable-version-check --error src scripts
 
   verify:
     name: Testes e segurança
@@ -97,21 +97,31 @@ jobs:
         id: build
       - run: npm run test:unit
         id: unit
+      - name: Preparar papéis do banco de teste
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker exec -i "$POSTGRES_CONTAINER" psql -X -U ci -d auto_finance -v ON_ERROR_STOP=1 < database/bootstrap.sql
+          docker exec -i "$POSTGRES_CONTAINER" psql -X -U ci -d auto_finance -v ON_ERROR_STOP=1 <<'SQL'
+          ALTER ROLE auto_finance_migrator PASSWORD 'ci-migration';
+          ALTER ROLE auto_finance_api PASSWORD 'ci-api';
+          SQL
       - run: npm run test:integration
         id: integration
         env:
-          DATABASE_URL: postgresql://ci:ci@127.0.0.1:54329/auto_finance
+          TEST_DATABASE_URL: postgresql://auto_finance_api:ci-api@127.0.0.1:54329/auto_finance
+          TEST_DATABASE_MIGRATION_URL: postgresql://auto_finance_migrator:ci-migration@127.0.0.1:54329/auto_finance
       - name: Instalar Chromium pelo lockfile
         run: node node_modules/@playwright/test/cli.js install --with-deps chromium
       - name: Executar testes no navegador
         id: e2e
         env:
-          DATABASE_URL: postgresql://ci:ci@127.0.0.1:54329/auto_finance
+          DATABASE_URL: postgresql://auto_finance_api:ci-api@127.0.0.1:54329/auto_finance
         run: npm run test:e2e
       - name: Executar análise passiva com OWASP ZAP
         id: zap
         env:
-          DATABASE_URL: postgresql://ci:ci@127.0.0.1:54329/auto_finance
+          DATABASE_URL: postgresql://auto_finance_api:ci-api@127.0.0.1:54329/auto_finance
         run: |
           archive="$RUNNER_TEMP/zap.zip"
           curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 180 --retry 2 \

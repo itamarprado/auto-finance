@@ -4,8 +4,8 @@ export interface Config {
   production: boolean
 }
 
-export function readConfig(env: NodeJS.ProcessEnv): Config {
-  const databaseUrl = env.DATABASE_URL ?? ''
+export function readPostgresUrl(env: NodeJS.ProcessEnv, key: 'DATABASE_URL' | 'DATABASE_MIGRATION_URL'): string {
+  const databaseUrl = env[key] ?? ''
   const parsedUrl = URL.parse(databaseUrl)
   if (
     !parsedUrl?.hostname ||
@@ -13,8 +13,13 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
     parsedUrl.pathname.length < 2 ||
     !['postgres:', 'postgresql:'].includes(parsedUrl.protocol)
   ) {
-    throw new Error('DATABASE_URL deve indicar uma conexão PostgreSQL válida.')
+    throw new Error(`${key} deve indicar uma conexão PostgreSQL válida.`)
   }
+  return databaseUrl
+}
+
+export function readConfig(env: NodeJS.ProcessEnv): Config {
+  const databaseUrl = readPostgresUrl(env, 'DATABASE_URL')
 
   const portValue = env.PORT ?? '3000'
   const port = Number(portValue)
