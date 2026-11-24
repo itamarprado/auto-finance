@@ -16,6 +16,8 @@ jobs:
         responseCode: 200
       - url: http://127.0.0.1:3107/api/auth/session
         responseCode: 401
+      - url: http://127.0.0.1:3107/api/workspaces/00000000-0000-4000-8000-000000000000/ledger/catalog
+        responseCode: 401
   - type: passiveScan-wait
     parameters:
       maxDuration: 2

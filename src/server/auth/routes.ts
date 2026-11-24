@@ -1,11 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Pool } from 'pg'
 import { findWorkspace, listWorkspaces } from '../database/workspaces.ts'
+import { registerLedgerRoutes, workspaceParamsSchema } from '../ledger/routes.ts'
 import { openSession, revokeSession, sessionLifetimeSeconds, sessionUser } from './sessions.ts'
 
 const sessionCookie = 'auto_finance_session'
 const localHost = /^(?:127\.0\.0\.1|localhost)(?::[0-9]{1,5})?$/i
-const uuid = '^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$'
 const credentialsSchema = {
   type: 'object',
   required: ['username', 'password'],
@@ -74,13 +74,7 @@ export function registerAccessRoutes(app: FastifyInstance, database: Pool): void
     })
 
     routes.get<{ Params: { workspaceId: string } }>('/api/workspaces/:workspaceId', {
-      schema: {
-        params: {
-          type: 'object',
-          required: ['workspaceId'],
-          properties: { workspaceId: { type: 'string', pattern: uuid } },
-        },
-      },
+      schema: { params: workspaceParamsSchema },
     }, async (request, reply) => {
       const user = await requireUser(request, reply)
       if (!user) return reply
@@ -88,5 +82,7 @@ export function registerAccessRoutes(app: FastifyInstance, database: Pool): void
       if (!workspace) return reply.code(404).send({ message: 'Espaço financeiro não encontrado.' })
       return workspace
     })
+
+    registerLedgerRoutes(routes, database, requireUser)
   })
 }

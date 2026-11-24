@@ -12,3 +12,13 @@ export function parseBrlCents(decimal: string): number {
 
   return cents === 0 ? 0 : cents
 }
+
+const integerFormatter = new Intl.NumberFormat('pt-BR')
+
+export function formatBrlCents(value: string | bigint): string {
+  const cents = BigInt(value)
+  const absolute = cents < 0n ? -cents : cents
+  const whole = integerFormatter.format(absolute / 100n)
+  const fraction = (absolute % 100n).toString().padStart(2, '0')
+  return `${cents < 0n ? '-' : ''}R$ ${whole},${fraction}`
+}
