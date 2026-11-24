@@ -6,8 +6,8 @@ A aplicação e o PostgreSQL da instalação padrão escutam em loopback. Dados 
 
 ## 1. Acesso e sessões
 
-- **Contas autorizadas.** Quando houver operações financeiras, validar a identidade do operador e a associação ao espaço financeiro. Cada instalação define suas permissões. [Autenticação OWASP](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)
-- **Sessão web.** Usar sessão revogável e cookie de sessão com `Secure`, `HttpOnly` e `SameSite` apropriado ao fluxo de login. Proteger alterações contra CSRF. Encerrar a sessão no logout e permitir revogação em caso de perda de aparelho. [OWASP — Sessões](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html), [OWASP — CSRF](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html).
+- **Contas autorizadas.** A pessoa responsável pela instalação cria contas e espaços pelo terminal, usando a credencial de migração. O PostgreSQL guarda o derivado da senha com scrypt e sal aleatório. [Armazenamento de senhas OWASP](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
+- **Sessão web.** O servidor cria um token aleatório, guarda seu hash e aplica expiração após 12 horas. O cookie usa `HttpOnly`, `SameSite=Strict`, escopo em `/api` e `Secure` em HTTPS. A instalação padrão usa HTTP em loopback. Login e logout exigem a origem local exata. Logout revoga a sessão no servidor. [OWASP — Sessões](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html), [OWASP — CSRF](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html).
 - **Autorização por espaço financeiro.** A API verifica sessão, associação ao espaço e permissão em cada operação. Consultas a transações, documentos, exportações e tarefas usam o espaço autorizado como parte do recorte. A titularidade do cartão descreve o dado bancário. O acesso a ele decorre da permissão no espaço compartilhado. [OWASP — Autorização](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html).
 - **Limites e diagnóstico.** Limitar tentativas de login conforme o mecanismo escolhido. Registrar falhas e alterações de acesso e integração com informações mínimas. Evitar dados financeiros e segredos em logs, respostas de erro e ferramentas de monitoramento.
 
@@ -15,7 +15,7 @@ A aplicação e o PostgreSQL da instalação padrão escutam em loopback. Dados 
 
 | Componente | Proteção proposta |
 | --- | --- |
-| Navegador e API | Interface e API sob o mesmo domínio inicialmente. HTTPS para toda a sessão. Respostas financeiras privadas usam política de cache adequada, e conteúdo importado é exibido como texto salvo quando houver renderização sanitizada. |
+| Navegador e API | Interface e API na mesma origem local. Respostas autenticadas usam `Cache-Control: no-store`. Conteúdo importado é exibido como texto, salvo quando houver renderização sanitizada. |
 | PostgreSQL | Restringir o acesso ao backend e às tarefas autorizadas. Vincular o banco local a loopback, usar credenciais com privilégios mínimos e dar à migração um papel próprio. |
 | Segredos do Meu Pluggy | Injetar as credenciais de cada titular no processo autorizado do servidor e manter a chave temporária em memória. Aplicar o procedimento de gestão de credenciais abaixo. |
 | Arquivos importados | Validar tamanho e formato no servidor, restringir acesso durante a prévia e descartar o original após confirmação, cancelamento ou expiração. Guardar dados normalizados. Anexos futuros exigem acesso privado, retenção explícita e uma forma de eliminar dados proibidos antes de guardar o arquivo. |

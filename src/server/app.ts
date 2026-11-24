@@ -1,8 +1,11 @@
 import { fileURLToPath } from 'node:url'
+import cookie from '@fastify/cookie'
 import helmet from '@fastify/helmet'
+import rateLimit from '@fastify/rate-limit'
 import staticFiles from '@fastify/static'
 import Fastify, { LogController } from 'fastify'
 import pg from 'pg'
+import { registerAccessRoutes } from './auth/routes.ts'
 import type { Config } from './config.ts'
 
 export function createApp(config: Config, { serveWeb = false, logger = false } = {}) {
@@ -16,6 +19,8 @@ export function createApp(config: Config, { serveWeb = false, logger = false } =
 
   database.on('error', () => app.log.warn('Conexão PostgreSQL inativa interrompida.'))
   app.addHook('onClose', () => database.end())
+  app.register(cookie)
+  app.register(rateLimit, { global: false, hook: 'preHandler' })
   app.register(helmet, {
     strictTransportSecurity: config.production ? undefined : false,
     xFrameOptions: { action: 'deny' },
@@ -41,6 +46,8 @@ export function createApp(config: Config, { serveWeb = false, logger = false } =
       return reply.code(503).send({ status: 'unavailable' })
     }
   })
+
+  registerAccessRoutes(app, database)
 
   if (serveWeb) {
     app.register(staticFiles, { root: fileURLToPath(new URL('../web/', import.meta.url)) })
