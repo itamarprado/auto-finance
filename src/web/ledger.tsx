@@ -127,15 +127,15 @@ function StatementView({ catalog, statement, filters, apply, loading }: {
         </form>
         {statement.entries.length ? (
           <div className="ledger-table-wrap" tabIndex={0} aria-label="Lista de movimentações">
-            <table className="ledger-table">
-              <thead><tr><th scope="col">Data</th><th scope="col">Descrição</th><th scope="col">Origem</th><th scope="col">Tipo</th><th scope="col">Valor</th></tr></thead>
-              <tbody>{statement.entries.map((entry) => (
-                <tr key={entry.id}>
-                  <td><time dateTime={entry.occurredOn}>{formatDate(entry.occurredOn)}</time></td>
-                  <td><strong>{entry.description}</strong></td>
-                  <td>{entry.instrumentName}<small>{entry.holderName}</small></td>
-                  <td><span className={`ledger-tag ledger-tag-${entry.kind}`}>{entryLabels[entry.kind]}</span></td>
-                  <td className={`ledger-amount ${entry.kind === 'income' ? 'ledger-positive' : ''}`}>
+            <table className="ledger-table" role="table">
+              <thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader">Data</th><th scope="col" role="columnheader">Descrição</th><th scope="col" role="columnheader">Origem</th><th scope="col" role="columnheader">Tipo</th><th scope="col" role="columnheader">Valor</th></tr></thead>
+              <tbody role="rowgroup">{statement.entries.map((entry) => (
+                <tr key={entry.id} role="row">
+                  <td role="cell"><time dateTime={entry.occurredOn}>{formatDate(entry.occurredOn)}</time></td>
+                  <td role="cell"><strong>{entry.description}</strong></td>
+                  <td role="cell">{entry.instrumentName}<small>{entry.holderName}</small></td>
+                  <td role="cell"><span className={`ledger-tag ledger-tag-${entry.kind}`}>{entryLabels[entry.kind]}</span></td>
+                  <td role="cell" className={`ledger-amount ${entry.kind === 'income' ? 'ledger-positive' : ''}`}>
                     {formatBrlCents(BigInt(entry.amountCents) * (entry.kind === 'income' ? 1n : -1n))}
                   </td>
                 </tr>
