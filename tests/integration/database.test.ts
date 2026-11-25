@@ -3,6 +3,7 @@ import pg from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { readPostgresUrl } from '../../src/server/config.ts'
 import { applyMigrations, loadMigrations } from '../../src/server/database/migrations.ts'
+import { createPrismaClient } from '../../src/server/database/prisma.ts'
 import { createWorkspace } from '../../src/server/database/workspaces.ts'
 
 const directory = new URL('../../database/migrations/', import.meta.url)
@@ -14,6 +15,7 @@ const migrator = new pg.Pool({
 const api = new pg.Pool({
   connectionString: readPostgresUrl({ DATABASE_URL: process.env.TEST_DATABASE_URL }, 'DATABASE_URL'),
 })
+const prisma = createPrismaClient(api)
 
 beforeAll(async () => {
   const metadata = await migrator.query<{ exists: boolean }>(
@@ -27,6 +29,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  await prisma.$disconnect()
   await Promise.all([migrator.end(), api.end()])
 })
 
@@ -80,7 +83,7 @@ describe('Migrações', () => {
 describe('Integridade e papel da API', () => {
   it('cria um espaço e o vínculo de proprietário na mesma operação', async () => {
     const owner = await insertUser()
-    const workspaceId = await createWorkspace(api, { name: 'Espaço sintético', ownerId: owner.id })
+    const workspaceId = await createWorkspace(prisma, { name: 'Espaço sintético', ownerId: owner.id })
     const result = await api.query<{ user_id: string; role: string }>(
       'SELECT user_id, role FROM auto_finance.workspace_members WHERE workspace_id = $1',
       [workspaceId],
@@ -90,7 +93,7 @@ describe('Integridade e papel da API', () => {
 
   it('não deixa um espaço órfão quando o proprietário não existe', async () => {
     const name = `Espaço sintético ${randomUUID()}`
-    await expect(createWorkspace(api, { name, ownerId: randomUUID() })).rejects.toMatchObject({ code: '23503' })
+    await expect(createWorkspace(prisma, { name, ownerId: randomUUID() })).rejects.toMatchObject({ code: 'P2003' })
     const result = await api.query('SELECT id FROM auto_finance.workspaces WHERE name = $1', [name])
     expect(result.rowCount).toBe(0)
   })
@@ -98,7 +101,7 @@ describe('Integridade e papel da API', () => {
   it('impede identificadores duplicados e vínculos inválidos', async () => {
     const owner = await insertUser()
     const member = await insertUser()
-    const workspaceId = await createWorkspace(api, { name: 'Espaço sintético', ownerId: owner.id })
+    const workspaceId = await createWorkspace(prisma, { name: 'Espaço sintético', ownerId: owner.id })
     const insertMember =
       'INSERT INTO auto_finance.workspace_members (workspace_id, user_id, role) VALUES ($1, $2, $3)'
 

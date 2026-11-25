@@ -3,6 +3,7 @@ import pg from 'pg'
 import { createLocalAccount } from '../src/server/auth/accounts.ts'
 import { isValidPassword, isValidUsername } from '../src/server/auth/passwords.ts'
 import { readPostgresUrl } from '../src/server/config.ts'
+import { createPrismaClient } from '../src/server/database/prisma.ts'
 
 const [username = '', displayArgument, workspaceArgument] = process.argv.slice(2)
 const displayName = displayArgument?.trim() ?? username
@@ -14,6 +15,7 @@ if (!process.stdin.isTTY || !isValidUsername(username) || !displayName || !works
 }
 
 let database: pg.Pool | undefined
+let prisma: ReturnType<typeof createPrismaClient> | undefined
 try {
   const connectionString = readPostgresUrl(process.env, 'DATABASE_MIGRATION_URL')
   const password = await passwordPrompt({
@@ -28,11 +30,12 @@ try {
   })
 
   database = new pg.Pool({ connectionString, connectionTimeoutMillis: 5_000, max: 1 })
-  await createLocalAccount(database, { username, displayName, workspaceName, password })
+  prisma = createPrismaClient(database)
+  await createLocalAccount(prisma, { username, displayName, workspaceName, password })
   console.log('Conta e espaço financeiro criados.')
 } catch (error) {
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
-  if (code === '23505') {
+  if (code === 'P2002') {
     console.error('O usuário já existe.')
   } else if (error instanceof Error && error.name === 'ExitPromptError') {
     console.error('Criação de conta cancelada.')
@@ -41,5 +44,9 @@ try {
   }
   process.exitCode = 1
 } finally {
-  await database?.end()
+  try {
+    await prisma?.$disconnect()
+  } finally {
+    await database?.end()
+  }
 }

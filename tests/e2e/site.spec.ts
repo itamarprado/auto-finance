@@ -5,6 +5,7 @@ import pg from 'pg'
 import { createLocalAccount } from '../../src/server/auth/accounts.ts'
 import { readPostgresUrl } from '../../src/server/config.ts'
 import { applyMigrations, loadMigrations } from '../../src/server/database/migrations.ts'
+import { createPrismaClient } from '../../src/server/database/prisma.ts'
 
 test('o build web abre e confirma a conexão real com o PostgreSQL', async ({ page }) => {
   await page.goto('/')
@@ -43,17 +44,19 @@ async function enterBrowserWorkspace(page: Page, workspaceName: string) {
       'DATABASE_MIGRATION_URL',
     ),
   })
+  const provisioning = createPrismaClient(migrator)
   const username = `fixture_${randomUUID().replaceAll('-', '')}`
   const password = 'frase sintética para o navegador'
   try {
     await applyMigrations(migrator, await loadMigrations(new URL('../../database/migrations/', import.meta.url)))
-    await createLocalAccount(migrator, {
+    await createLocalAccount(provisioning, {
       username,
       password,
       displayName: 'Pessoa do navegador',
       workspaceName,
     })
   } finally {
+    await provisioning.$disconnect()
     await migrator.end()
   }
 

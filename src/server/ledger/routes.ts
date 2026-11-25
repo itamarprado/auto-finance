@@ -68,7 +68,7 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, pr
       const user = await requireUser(request, reply)
       if (!user) return reply
       const { workspaceId } = request.params as WorkspaceParams
-      if (!await findWorkspace(database, user.id, workspaceId)) {
+      if (!await findWorkspace(prisma, user.id, workspaceId)) {
         return reply.code(404).send({ message: 'Espaço financeiro não encontrado.' })
       }
     })

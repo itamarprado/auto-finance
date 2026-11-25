@@ -5,19 +5,21 @@ import { createApp } from '../../src/server/app.ts'
 import { createLocalAccount } from '../../src/server/auth/accounts.ts'
 import { readConfig, readPostgresUrl } from '../../src/server/config.ts'
 import { applyMigrations, loadMigrations } from '../../src/server/database/migrations.ts'
+import { createPrismaClient } from '../../src/server/database/prisma.ts'
 
 const migrator = new pg.Pool({
   connectionString: readPostgresUrl(
     { DATABASE_MIGRATION_URL: process.env.TEST_DATABASE_MIGRATION_URL }, 'DATABASE_MIGRATION_URL',
   ),
 })
+const provisioning = createPrismaClient(migrator)
 const app = createApp(readConfig({ DATABASE_URL: process.env.TEST_DATABASE_URL }))
 const local = { host: '127.0.0.1:3107', origin: 'http://127.0.0.1:3107' }
 const password = 'Frase sintética exclusiva para o extrato'
 
 async function fixture(displayName: string) {
   const username = `fixture_${randomUUID().replaceAll('-', '')}`
-  const { workspaceId } = await createLocalAccount(migrator, {
+  const { workspaceId } = await createLocalAccount(provisioning, {
     username, displayName, workspaceName: displayName, password,
   })
   const login = await app.inject({
@@ -61,6 +63,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  await provisioning.$disconnect()
   await Promise.all([app.close(), migrator.end()])
 })
 

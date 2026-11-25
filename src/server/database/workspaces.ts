@@ -1,5 +1,4 @@
-import type { Pool, PoolClient } from 'pg'
-import { inTransaction } from './transaction.ts'
+import type { Prisma, PrismaClient } from '../generated/prisma/client.ts'
 
 interface NewWorkspace {
   name: string
@@ -12,49 +11,42 @@ interface AccessibleWorkspace {
   role: 'owner' | 'member'
 }
 
-export async function createWorkspace(
-  database: Pool,
-  workspace: NewWorkspace,
-): Promise<string> {
-  return inTransaction(database, (client) => insertWorkspace(client, workspace))
+const workspaceSelection = {
+  role: true,
+  workspace: { select: { id: true, name: true } },
+} satisfies Prisma.WorkspaceMemberSelect
+
+function toAccessibleWorkspace({ role, workspace }: Prisma.WorkspaceMemberGetPayload<{ select: typeof workspaceSelection }>): AccessibleWorkspace {
+  if (role !== 'owner' && role !== 'member') throw new Error('Papel inválido no espaço financeiro.')
+  return { ...workspace, role }
 }
 
-export async function insertWorkspace(client: PoolClient, { name, ownerId }: NewWorkspace): Promise<string> {
-  const { rows: [workspace] } = await client.query<{ id: string }>(
-    'INSERT INTO auto_finance.workspaces (name) VALUES ($1) RETURNING id',
-    [name],
-  )
-  await client.query(
-    `INSERT INTO auto_finance.workspace_members (workspace_id, user_id, role)
-     VALUES ($1, $2, 'owner')`,
-    [workspace.id, ownerId],
-  )
-  return workspace.id
+export async function createWorkspace(prisma: PrismaClient, workspace: NewWorkspace): Promise<string> {
+  return prisma.$transaction((transaction) => insertWorkspace(transaction, workspace))
 }
 
-export async function listWorkspaces(database: Pool, userId: string): Promise<AccessibleWorkspace[]> {
-  const { rows } = await database.query<AccessibleWorkspace>(
-    `SELECT w.id, w.name, m.role
-       FROM auto_finance.workspace_members AS m
-       JOIN auto_finance.workspaces AS w ON w.id = m.workspace_id
-       WHERE m.user_id = $1
-       ORDER BY w.name, w.id`,
-    [userId],
-  )
-  return rows
+export async function insertWorkspace(transaction: Prisma.TransactionClient, { name, ownerId }: NewWorkspace): Promise<string> {
+  const { id } = await transaction.workspace.create({ data: { name }, select: { id: true } })
+  await transaction.workspaceMember.create({
+    data: { workspaceId: id, userId: ownerId, role: 'owner' },
+    select: { workspaceId: true },
+  })
+  return id
 }
 
-export async function findWorkspace(
-  database: Pool,
-  userId: string,
-  workspaceId: string,
-): Promise<AccessibleWorkspace | undefined> {
-  const { rows: [workspace] } = await database.query<AccessibleWorkspace>(
-    `SELECT w.id, w.name, m.role
-       FROM auto_finance.workspace_members AS m
-       JOIN auto_finance.workspaces AS w ON w.id = m.workspace_id
-       WHERE m.user_id = $1 AND w.id = $2`,
-    [userId, workspaceId],
-  )
-  return workspace
+export async function listWorkspaces(prisma: PrismaClient, userId: string): Promise<AccessibleWorkspace[]> {
+  const memberships = await prisma.workspaceMember.findMany({
+    where: { userId },
+    select: workspaceSelection,
+    orderBy: [{ workspace: { name: 'asc' } }, { workspaceId: 'asc' }],
+  })
+  return memberships.map(toAccessibleWorkspace)
+}
+
+export async function findWorkspace(prisma: PrismaClient, userId: string, workspaceId: string): Promise<AccessibleWorkspace | undefined> {
+  const membership = await prisma.workspaceMember.findUnique({
+    where: { workspaceId_userId: { workspaceId, userId } },
+    select: workspaceSelection,
+  })
+  return membership ? toAccessibleWorkspace(membership) : undefined
 }
