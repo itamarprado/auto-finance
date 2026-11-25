@@ -163,7 +163,7 @@ interface MonthlyReport {
   from: string
   to: string
   statement: Statement
-  cash: { netCents: string; paidCents: string }
+  cash: { netCents: string; paidCents: string; reimbursementNetCents: string }
 }
 
 export function MonthlyView({ url, revision, expireSession }: Omit<ImportProps, 'catalog' | 'saved'>) {
@@ -187,6 +187,7 @@ export function MonthlyView({ url, revision, expireSession }: Omit<ImportProps, 
         <div><dt>Compras no cartão</dt><dd>{total(summary.purchaseCents)}</dd></div>
         <div><dt>Estornos de compra</dt><dd>{total(summary.refundCents)}</dd></div>
         <div><dt>Pagamentos de fatura líquidos</dt><dd>{total(data.cash.paidCents)}</dd></div>
+        <div><dt>Reembolsos líquidos</dt><dd>{total(data.cash.reimbursementNetCents)}</dd></div>
         <div><dt>Variação de caixa efetivada</dt><dd>{total(data.cash.netCents)}</dd></div>
       </dl>
       <div className="ledger-section-heading"><h2>Totais por categoria</h2></div>

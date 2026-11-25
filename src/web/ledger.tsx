@@ -10,6 +10,7 @@ import { defaultInvoiceRoute, readInvoiceRoute, writeInvoiceRoute } from './invo
 import type { InvoiceRoute } from './invoice-navigation.ts'
 import { formatDate, LedgerError, ledgerRequest } from './ledger-http.ts'
 import { ImportsView, MonthlyView } from './import-view.tsx'
+import { SplitsView } from './splits-view.tsx'
 
 interface Filters {
   from: string
@@ -22,10 +23,11 @@ interface Filters {
   page: number
 }
 
-type Screen = LedgerSection | 'invoices' | 'cash' | 'imports' | 'monthly'
-const screenLabels = { ...sectionLabels, invoices: 'Faturas', cash: 'Fluxo de caixa', imports: 'Importar CSV', monthly: 'Fechamento mensal' }
-const symbols = { entries: '≡', holders: '◉', accounts: '▤', cards: '▰', invoices: '▤', cash: '↔', imports: '↓', monthly: '▦' }
-const sections: Screen[] = ['entries', 'invoices', 'cash', 'imports', 'monthly', 'holders', 'accounts', 'cards']
+type Screen = LedgerSection | 'invoices' | 'cash' | 'imports' | 'monthly' | 'splits'
+const screenLabels = { ...sectionLabels, invoices: 'Faturas', cash: 'Fluxo de caixa', imports: 'Importar CSV', monthly: 'Fechamento mensal', splits: 'Rateios e acertos' }
+const symbols = { entries: '≡', holders: '◉', accounts: '▤', cards: '▰', invoices: '▤', cash: '↔', imports: '↓', monthly: '▦', splits: '÷' }
+const sections: Screen[] = ['entries', 'invoices', 'cash', 'splits', 'imports', 'monthly', 'holders', 'accounts', 'cards']
+const incomingKinds = new Set(['income', 'refund', 'reimbursement_in'])
 
 function isManualScreen(section: Screen): section is LedgerSection {
   return Object.hasOwn(formLabels, section)
@@ -119,6 +121,8 @@ function StatementView({ catalog, statement, filters, apply, loading, url, saveL
             <option value="">Todos os tipos</option>
             <option value="income">Receita</option><option value="expense">Despesa</option><option value="purchase">Compra no cartão</option>
             <option value="refund">Estorno no cartão</option>
+            <option value="reimbursement_in">Reembolso recebido</option>
+            <option value="reimbursement_out">Reembolso enviado</option>
           </select></label>
           <label>De<input name="from" type="date" defaultValue={filters.from} /></label>
           <label>Até<input name="to" type="date" defaultValue={filters.to} /></label>
@@ -141,8 +145,8 @@ function StatementView({ catalog, statement, filters, apply, loading, url, saveL
                   </td>
                   <td role="cell">{entry.instrumentName}<small>{entry.holderName}</small></td>
                   <td role="cell"><span className={`ledger-tag ledger-tag-${entry.kind}`}>{entryLabels[entry.kind]}</span></td>
-                  <td role="cell" className={`ledger-amount ${entry.kind === 'income' || entry.kind === 'refund' ? 'ledger-positive' : ''}`}>
-                    {formatBrlCents(BigInt(entry.amountCents) * (entry.kind === 'income' || entry.kind === 'refund' ? 1n : -1n))}
+                  <td role="cell" className={`ledger-amount ${incomingKinds.has(entry.kind) ? 'ledger-positive' : ''}`}>
+                    {formatBrlCents(BigInt(entry.amountCents) * (incomingKinds.has(entry.kind) ? 1n : -1n))}
                   </td>
                 </tr>
               ))}</tbody>
@@ -339,6 +343,7 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
         {data && section === 'cash' && <CashView url={url} catalog={data.catalog} revision={revision} saved={saved} expireSession={expireSession} />}
         {data && section === 'imports' && <ImportsView url={url} catalog={data.catalog} revision={revision} saved={saved} expireSession={expireSession} />}
         {data && section === 'monthly' && <MonthlyView url={url} revision={revision} expireSession={expireSession} />}
+        {data && section === 'splits' && <SplitsView url={url} catalog={data.catalog} revision={revision} saved={saved} expireSession={expireSession} />}
         {data && isManualScreen(section) && section !== 'entries' && <CatalogView section={section} catalog={data.catalog} />}
         {!data && loading && <p className="ledger-surface ledger-empty">Carregando o espaço financeiro…</p>}
         {data && form && <LedgerForm section={form} catalog={data.catalog} dismiss={() => setForm(null)} save={save} />}

@@ -316,3 +316,53 @@ test('confirma um CSV, identifica a reaplicação e confere a classificação no
   await page.setViewportSize({ width: 360, height: 780 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
+
+test('divide uma compra, concilia o PIX e mantém o rateio acessível em tela estreita', async ({ page }) => {
+  await enterBrowserWorkspace(page, 'Espaço dos rateios no navegador')
+  const session = await (await page.request.get('/api/auth/session')).json()
+  const ledger = `/api/workspaces/${session.workspaces[0].id}/ledger`
+  const headers = { Origin: new URL(page.url()).origin }
+  const payer = randomUUID()
+  const participant = randomUUID()
+  const account = randomUUID()
+  const card = randomUUID()
+  const purchase = randomUUID()
+  const payment = randomUUID()
+  const seed = async (path: string, data: object) => {
+    const response = await page.request.post(`${ledger}/${path}`, { headers, data })
+    expect(response.status()).toBe(201)
+  }
+  await seed('holders', { id: payer, name: 'Pessoa A' })
+  await seed('holders', { id: participant, name: 'Pessoa B' })
+  await seed('accounts', { id: account, holderId: payer, name: 'Conta da Pessoa A', kind: 'bank',
+    openingBalanceCents: 0, openingDate: '2024-01-01', includeInBalance: true })
+  await seed('cards', { id: card, holderId: payer, name: 'Cartão da Pessoa A', closingDay: 25, dueDay: 8, limitCents: 100000 })
+  await seed('entries', { id: purchase, kind: 'purchase', instrumentId: card, description: 'Mercado compartilhado',
+    amountCents: 24000, occurredOn: '2024-06-10' })
+  await seed('entries', { id: payment, kind: 'income', instrumentId: account, description: 'PIX de acerto',
+    amountCents: 12000, occurredOn: '2024-06-11' })
+
+  await page.reload()
+  await page.getByRole('button', { name: /Espaço dos rateios no navegador/ }).click()
+  await page.getByRole('navigation', { name: 'Área financeira' }).getByRole('button', { name: 'Rateios e acertos' }).click()
+  await page.getByRole('button', { name: 'Novo rateio', exact: true }).click()
+  const add = page.getByRole('dialog', { name: 'Novo rateio' })
+  await add.getByLabel('Despesa original').selectOption(`entry:${purchase}`)
+  await expect(add.getByLabel('Quem pagou')).toHaveValue(payer)
+  await add.getByRole('checkbox', { name: 'Pessoa A', exact: true }).check()
+  await add.getByRole('checkbox', { name: 'Pessoa B', exact: true }).check()
+  await add.getByRole('button', { name: 'Salvar', exact: true }).click()
+  await expect(add).toBeHidden()
+  const splits = page.getByRole('region', { name: 'Rateios registrados' })
+  await expect(splits).toContainText('Falta pagar R$ 120,00')
+
+  await page.setViewportSize({ width: 360, height: 780 })
+  await splits.getByRole('button', { name: 'Conciliar reembolso de Pessoa B em Mercado compartilhado' }).click()
+  const settle = page.getByRole('dialog', { name: 'Conciliar reembolso' })
+  await settle.getByLabel('Movimentação do reembolso').selectOption(`entry:${payment}`)
+  await settle.getByRole('button', { name: 'Salvar', exact: true }).click()
+  await expect(settle).toBeHidden()
+  await expect(splits).toContainText('Quitado')
+  await expect(splits).toContainText('PIX de acerto')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})

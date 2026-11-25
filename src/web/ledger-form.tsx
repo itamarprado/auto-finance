@@ -9,7 +9,10 @@ type NewRecord = HolderInput | AccountInput | CardInput | EntryInput
 
 export const sectionLabels = { entries: 'Extrato', holders: 'Titulares', accounts: 'Contas', cards: 'Cartões' }
 export const formLabels = { entries: 'Novo lançamento', holders: 'Novo titular', accounts: 'Nova conta', cards: 'Novo cartão' }
-export const entryLabels = { income: 'Receita', expense: 'Despesa', purchase: 'Compra no cartão', refund: 'Estorno no cartão' }
+export const entryLabels = {
+  income: 'Receita', expense: 'Despesa', purchase: 'Compra no cartão', refund: 'Estorno no cartão',
+  reimbursement_in: 'Reembolso recebido', reimbursement_out: 'Reembolso enviado',
+}
 
 export function field(data: FormData, name: string): string {
   return String(data.get(name) ?? '').trim()

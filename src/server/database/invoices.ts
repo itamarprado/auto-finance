@@ -1,5 +1,6 @@
 import { Prisma } from '../generated/prisma/client.ts'
 import type { PrismaClient } from '../generated/prisma/client.ts'
+import { withFinancialLock } from './transaction.ts'
 
 export interface InvoiceKey {
   cardId: string
@@ -208,14 +209,12 @@ function createAdjustment(transaction: Prisma.TransactionClient, workspaceId: st
 
 async function serializeAdjustment(prisma: PrismaClient, workspaceId: string, input: { id: string; occurredOn: string },
   write: (transaction: Prisma.TransactionClient) => Promise<boolean>): Promise<boolean> {
-  return prisma.$transaction(async (transaction) => {
-    // A fatura pode mudar entre a validação e a gravação. Serialize os ajustes do mesmo espaço.
-    await transaction.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${workspaceId.toLowerCase()}, 634028))`
+  return withFinancialLock(prisma, workspaceId, async (transaction) => {
     if (await transaction.financialAdjustment.findUnique({ where: { workspaceId_id: { workspaceId, id: input.id } }, select: { id: true } })) return false
     const [{ currentDate }] = await transaction.$queryRaw<[{ currentDate: string }]>`SELECT to_char(${today}, 'YYYY-MM-DD') AS "currentDate"`
     if (input.occurredOn > currentDate) throw new FinancialInputError('Informe uma data de movimentação até hoje.')
     return write(transaction)
-  }, { isolationLevel: 'ReadCommitted' })
+  })
 }
 
 export function addPayment(prisma: PrismaClient, workspaceId: string, input: PaymentInput): Promise<boolean> {
