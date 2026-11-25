@@ -7,8 +7,8 @@ import { addInstallment, addPayment, addRefund, addTransfer, FinancialInputError
 import type { InstallmentInput, PaymentInput, RefundInput, ReversalInput, TransferInput } from '../database/invoices.ts'
 import { addAccount, addCard, addEntry, addHolder, getCatalog, getStatement } from '../database/ledger.ts'
 import type { AccountInput, CardInput, EntryFilter, EntryInput, HolderInput } from '../database/ledger.ts'
-import { addRecurrence, changeRecurrence, recurrenceCandidates, recurrenceReport, writeOccurrence } from '../database/recurrences.ts'
-import type { OccurrenceInput, SeriesInput, VersionInput } from '../database/recurrences.ts'
+import { addRecurrence, changeRecurrence, configureForecast, recurrenceCandidates, recurrenceReport, writeOccurrence } from '../database/recurrences.ts'
+import type { ForecastSettingsInput, OccurrenceInput, SeriesInput, VersionInput } from '../database/recurrences.ts'
 import { addSettlement, addSplit, listReceiptSources, listSplits, listSplitSources } from '../database/splits.ts'
 import type { SettlementInput, SplitInput } from '../database/splits.ts'
 import { findWorkspace } from '../database/workspaces.ts'
@@ -118,14 +118,26 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, pr
     const series = { ...terms, name, startsOn: date,
       kind: { type: 'string', enum: ['subscription', 'expense', 'income'] },
       cadence: { type: 'string', enum: ['weekly', 'monthly', 'yearly'] } }
+    const forecastSettings = {
+      groupName: { anyOf: [{ type: 'string', maxLength: 80 }, { type: 'null' }] },
+      variableAmount: { type: 'boolean' },
+    }
     const version = { ...terms, effectiveOn: date }
     const exception = { id: uuid, scheduledOn: date, expectedOn: date, amountCents, entryId: uuid,
-      action: { type: 'string', enum: ['adjust', 'skip', 'restore', 'link'] } }
-    ledger.get<{ Params: WorkspaceParams; Querystring: { month: string } }>('/ledger/recurrences', {
+      confirmedCents: { ...money, minimum: 0 },
+      action: { type: 'string', enum: ['adjust', 'skip', 'restore', 'link', 'confirm', 'unconfirm'] } }
+    const reportSchema = {
       schema: { params: workspaceParamsSchema, querystring: {
         type: 'object', required: ['month'], additionalProperties: false, properties: { month: cycleMonth },
       } },
-    }, ({ params, query }, reply) => validDate(query.month) ? recurrenceReport(prisma, params.workspaceId, query.month) : invalidDate(reply))
+    }
+    ledger.get<{ Params: WorkspaceParams; Querystring: { month: string } }>('/ledger/recurrences', reportSchema,
+      ({ params, query }, reply) => validDate(query.month) ? recurrenceReport(prisma, params.workspaceId, query.month) : invalidDate(reply))
+    ledger.get<{ Params: WorkspaceParams; Querystring: { month: string } }>('/ledger/expense-forecast', reportSchema,
+      ({ params, query }, reply) => validDate(query.month) ? recurrenceReport(prisma, params.workspaceId, query.month, 'forecast') : invalidDate(reply))
+    ledger.post<{ Params: WorkspaceParams; Body: ForecastSettingsInput }>('/ledger/expense-forecast-settings',
+      bodySchema({ id: uuid, ...forecastSettings }, ['id', ...Object.keys(forecastSettings)]),
+      ({ params, body }, reply) => save(reply, body.id, () => configureForecast(prisma, params.workspaceId, body)))
     ledger.get<{ Params: WorkspaceParams; Querystring: { id: string; scheduledOn: string; search?: string } }>('/ledger/recurrence-candidates', {
       schema: { params: workspaceParamsSchema, querystring: {
         type: 'object', required: ['id', 'scheduledOn'], additionalProperties: false,
@@ -140,7 +152,7 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, pr
         throw error
       }
     })
-    ledger.post<{ Params: WorkspaceParams; Body: SeriesInput }>('/ledger/recurrences', bodySchema(series, Object.keys(series)),
+    ledger.post<{ Params: WorkspaceParams; Body: SeriesInput }>('/ledger/recurrences', bodySchema({ ...series, ...forecastSettings }, Object.keys(series)),
       ({ params, body }, reply) => [body.startsOn, body.endsOn].every((value) => value === null || validDate(value))
         ? save(reply, body.id, () => addRecurrence(prisma, params.workspaceId, body)) : invalidDate(reply))
     ledger.post<{ Params: WorkspaceParams; Body: VersionInput }>('/ledger/recurrence-versions', bodySchema(version, Object.keys(version)),

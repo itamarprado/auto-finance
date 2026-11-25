@@ -14,7 +14,7 @@ O que se consegue reconstruir publicamente é a arquitetura de produto e as fron
 | Dados bancários | Pluggy fornece Open Finance em leitura. O Dinzo exibe saúde da conexão, estado de sincronização e dados conforme a instituição transmite. | Arquivo, inserção manual e conector bancário são entradas para o mesmo modelo. A lógica financeira continua disponível quando a fonte externa falha. [Open Finance no Dinzo](https://ajuda.dinzo.com.br/hc/central-de-ajuda-dinzo/articles/1787188740-o-dinzo-e-seguro-como-funciona-o-open-finance), [Sincronização](https://ajuda.dinzo.com.br/hc/central-de-ajuda-dinzo/articles/1787188721-meus-dados-nao-atualizam-o-que-fazer) |
 | Infraestrutura | O produto de referência publica o uso de serviços gerenciados. | A instalação local reúne interface, API, banco e tarefas agendadas na máquina do operador. |
 | Processamento | O arquivo enviado vai para uma fila, passa por leitura e categorização e fica disponível para revisão. O Extrato e os relatórios documentam tratamento de faturas, pagamentos, duplicidades e projeções. | O backend trata importação revisável, conciliação, ciclos e projeção. Tarefas mais demoradas podem rodar fora da requisição, com estado consultável pelo site. [Importação](https://ajuda.dinzo.com.br/hc/central-de-ajuda-dinzo/articles/1787188738-importar-extrato-pdf-csv-ofx-ou-excel), [Extrato e totais](https://ajuda.dinzo.com.br/hc/central-de-ajuda-dinzo/articles/1787188735-por-que-os-totais-nao-batem-e-como-ocultar-lancamentos) |
-| Previsão | O saldo previsto combina saldos, entradas e compromissos. Uma assinatura no cartão entra no caixa pelo vencimento da fatura. A ajuda indica que o Dinzo trabalha com os compromissos conhecidos, sem projetar por médias. | Podemos manter o saldo comprometido e oferecer uma camada separada de valores estimados manualmente para Casa e Carro. [Saldo previsto](https://ajuda.dinzo.com.br/hc/central-de-ajuda-dinzo/articles/saldo-projetado-e-fluxo-do-mes), [Recorrências](https://ajuda.dinzo.com.br/hc/central-de-ajuda-dinzo/articles/1787188738-recorrentes-e-assinaturas) |
+| Previsão | O saldo previsto combina saldos, entradas e compromissos. Uma assinatura no cartão entra no caixa pelo vencimento da fatura. A ajuda indica que o Dinzo trabalha com os compromissos conhecidos, sem projetar por médias. | A primeira entrega de planejamento prevê despesas recorrentes com valores fixos ou estimados manualmente. A projeção de saldo por conta é uma evolução separada. [Saldo previsto](https://ajuda.dinzo.com.br/hc/central-de-ajuda-dinzo/articles/saldo-projetado-e-fluxo-do-mes), [Recorrências](https://ajuda.dinzo.com.br/hc/central-de-ajuda-dinzo/articles/1787188738-recorrentes-e-assinaturas) |
 
 Uma agregação central das operações financeiras é uma hipótese coerente com o comportamento dos clientes e os contratos da API. A documentação pública sustenta essa leitura funcional, sem revelar a topologia interna. Para chegar perto da experiência, os indicadores prioritários são extrato com filtros rápidos, faturas reconciliáveis, cartões com ciclos próprios e uma previsão que permite abrir a composição de cada valor.
 
@@ -69,21 +69,15 @@ O Dinzo já representa vínculos de assinaturas e recorrências com conta ou car
 - **Identidade do cartão.** Usar o cartão selecionado como filtro. Nome, titular e final, quando disponível, ajudam a distinguir cartões parecidos. Dois cartões podem ter listas separadas mesmo quando suas cobranças caem na mesma fatura.
 - **Mesmos registros nas duas visões.** Editar uma assinatura em qualquer visão atualiza as duas. Se a cobrança mudar de cartão, o novo vínculo vale a partir da ocorrência indicada, com o histórico das cobranças anteriores preservado.
 
-### 3.3 Planejamento editável por Casa, Carro e outros contextos
+### 3.3 Previsão mensal de gastos recorrentes
 
-**Plano** agrupa um propósito. **Categoria** descreve o tipo de gasto. **Cartão** é o meio de pagamento. **Pessoa** responde por uma parte da despesa. Por exemplo, uma assinatura de internet pode pertencer ao plano “Moradia”, à categoria “Internet” e ter o Cartão A como meio de pagamento. O plano aceita despesas bancárias, gastos de cartão e estimativas manuais.
+A unidade do planejamento é a despesa nomeada pelo usuário, como **Conta de Luz**, **Conta de Internet** ou **Conta de Água**. Casa e Carro são agrupamentos opcionais. É possível acompanhar despesas individualmente, com ou sem grupo. O meio de cobrança pode ser uma conta, um cartão ou ficar a definir.
 
-| Tipo de item do plano | Exemplos | Como afeta a previsão |
-| --- | --- | --- |
-| Fixo recorrente | Aluguel, internet, estacionamento | Gera ocorrências futuras com dia e valor próprios. |
-| Estimativa variável | Energia R$ 180, mercado R$ 900, combustível R$ 450 | Aparece como estimativa manual. Para caixa diário, o usuário pode indicar data, semana ou fim do mês. Uma estimativa sem data pode permanecer visível no total mensal. |
-| Pontual ou sazonal | IPVA em janeiro, seguro anual, revisão do carro em março | Gera saída prevista no mês ou data indicada, na conta ou cartão apropriado. |
-| Reserva | Separar R$ 150 por mês para manutenção | Reduz o disponível após reservas. Se houver transferência real para outra conta própria, ela é contabilizada separadamente como transferência. |
-| Teto de orçamento | Gastar até R$ 2.500 com Casa | Indica margem de orçamento. A projeção de caixa usa os compromissos e estimativas vinculados ao plano. |
+Uma despesa fixa, como internet, usa o valor contratado. Uma despesa variável, como luz, usa um valor de referência informado manualmente. É possível ajustar a estimativa só para um mês. Séries já cadastradas em Assinaturas e recorrências alimentam a previsão sem duplicar o cadastro.
 
-**Exemplo.** Para Casa, lançar aluguel de R$ 1.600, internet de R$ 120 e energia estimada de R$ 180. A expectativa é R$ 1.900. Chegou a conta de energia de R$ 205 e foi conciliada com a previsão. O total atualizado fica em R$ 1.925 e a variação de R$ 25 aparece ao lado da estimativa inicial. Se a internet cair no cartão, Casa a enxerga como gasto do plano e o caixa a enxerga dentro da fatura. Categorias e meios de pagamento oferecem recortes sobre o mesmo evento.
+Quando a conta chegar, o usuário pode confirmar seu valor antes do pagamento. Se já existir um lançamento efetivado, pode vinculá-lo à previsão. O resumo mensal mostra **estimativa original, valor confirmado, valor ainda estimado e variação**. O total atualizado soma os valores confirmados e as estimativas em aberto, contando cada cobrança uma vez.
 
-A primeira visão útil mostra **planejado, realizado, ainda previsto e diferença**, por mês e por plano. Para evitar que um limite ou reserva pareça uma cobrança, a projeção separa **compromissos conhecidos**, **estimativas manuais** e **disponível após reservas**. Mudanças de mês podem ser pontuais, como aumentar mercado apenas em dezembro, sem alterar a regra geral. A previsão de casa pode mostrar o valor total e a responsabilidade de cada pessoa. Na visão do seu caixa, um reembolso futuro entra apenas se estiver registrado como expectativa com data ou período.
+Por exemplo, uma Conta de Luz estimada em R$ 180 e confirmada em R$ 205 entra no total atualizado por R$ 205 e mostra uma diferença de R$ 25. A previsão de saldo por conta, a contribuição das faturas pelo vencimento, as reservas, os tetos e as despesas fora das séries recorrentes ficam para revisão posterior. [Assinaturas e recorrências](14-assinaturas-e-recorrencias.md), [Requisitos](02-requisitos.md).
 
 ## 4. Modelo mínimo e invariantes
 
@@ -93,7 +87,7 @@ A primeira visão útil mostra **planejado, realizado, ainda previsto e diferen�
 | Conta bancária, conta de crédito e cartão | A conta bancária movimenta caixa. A conta de crédito agrega fatura e limite. Um cartão identifica o instrumento e seu titular ou usuário. |
 | Transação e ciclo de fatura | O fato realizado tem origem e identidade. Compras de crédito são vinculadas ao ciclo. Pagamentos e estornos têm vínculos explícitos. |
 | Rateio e acerto | O rateio aloca uma transação a pessoas. O acerto baixa um saldo entre elas e pode apontar a um PIX importado. |
-| Plano e item de planejamento | O plano agrupa Casa, Carro etc. O item define tipo, datas, valor, meio de pagamento previsto e a pessoa, quando aplicável. |
+| Despesa prevista | A despesa pode ter um grupo opcional. A previsão mensal guarda valor de referência, ajustes, meio de cobrança e vínculo com o lançamento quando houver. |
 | Série, ocorrência e confirmação | Uma ocorrência deriva de uma série ou de um item pontual. A transação conciliada é usada como realizado e substitui a expectativa correspondente na projeção. |
 | Fonte e importação | O registro externo e as decisões de conciliação são rastreáveis por conta, origem e lote. Correções manuais persistem em novas importações. |
 
@@ -110,7 +104,7 @@ A primeira visão útil mostra **planejado, realizado, ainda previsto e diferen�
 | Saber o que entrou, saiu e ainda vence | Visão geral com saldo, próximos vencimentos e projeção, com acesso às linhas que compõem cada número. Mostrar realizado e previsto visualmente e por texto. |
 | Conferir cartões rapidamente | Na tela Assinaturas, alternar entre Visão geral e a lista de cada cartão. Na área de cartões, abrir a fatura, suas compras, parcelas e pagamentos. |
 | Manter o histórico sem retrabalho | Importar de arquivo com prévia e conciliação. Preencher lançamentos frequentes por formulário rápido e regras de categorização locais. Open Finance é uma segunda forma de alimentar esse mesmo fluxo. |
-| Planejar sem misturar com o extrato | Tela de Casa e Carro com tabela mensal editável, despesas confirmadas, estimativas e reservas. Permitir abrir do plano a compra ou cobrança conciliada. |
+| Acompanhar gastos previstos | Tela mensal com despesas recorrentes, estimativas editáveis e valores confirmados. Oferecer visão geral e agrupamento opcional e permitir abrir a cobrança conciliada. |
 | Usar pelo navegador | Entrar e abrir o painel em computador ou celular. Salvar filtros no espaço financeiro, operar com teclado, exibir erros acionáveis e oferecer exportação de dados. |
 
 Canais adicionais de captura, leitura de comprovantes e sincronização bancária têm custo de implementação próprio. A previsão financeira funciona com regras, dados manuais ou importados.
@@ -121,7 +115,7 @@ As fases, os primeiros PRs e os critérios de segurança estão no [plano de des
 
 1. **Provas em paralelo.** Validar o fluxo local com navegador, Fastify e PostgreSQL usando dados sintéticos. Testar a integração opcional com credenciais da instalação e conforme a modalidade autorizada pelo provedor.
 2. **Primeiro fluxo completo.** Cadastrar as duas pessoas e dois cartões. Importar ou registrar compras, fechar uma fatura e conciliar um pagamento parcial. Exibir os números por cartão e o extrato detalhado. Preparar as relações para cartões adicionais de uma conta de crédito.
-3. **Recursos próprios.** Ratear uma compra, conciliar um reembolso, mudar a cobrança de uma assinatura para outro cartão nas próximas ocorrências e projetar Casa e Carro com entradas manuais. O fluxo deve fechar os números nas três visões.
+3. **Recursos próprios.** Ratear uma compra, conciliar um reembolso, mudar a cobrança de uma assinatura para outro cartão nas próximas ocorrências e prever os gastos recorrentes do mês com valores manuais e cobranças confirmadas.
 4. **Validar operação financeira.** Agendar atualizações quando a integração estiver habilitada. Isolar falhas por conexão e refinar importação, parcelas, filtros, categorias e previsão.
 5. **Preparar instalação e atualização.** Testar instalação limpa, backup e restauração. Documentar inicialização, configuração local e atualização do banco.
 

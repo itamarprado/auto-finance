@@ -135,3 +135,74 @@ it('valida meio de cobrança e data final e permite suspender uma série a parti
   await create('recurrence-versions', { ...terms, id, effectiveOn: startsOn, cardId: null, accountId: account, active: false })
   expect((await report(`${startsOn.slice(0, 7)}-01`)).series).toContainEqual(expect.objectContaining({ id, next: null }))
 })
+
+async function forecast(month: string) {
+  const response = await get(`expense-forecast?month=${month}`)
+  expect(response.statusCode, response.body).toBe(200)
+  return response.json()
+}
+
+it('confirma a conta sem criar lançamento e conserva seu mês de previsão ao vincular o extrato', async () => {
+  const id = randomUUID()
+  const scheduledOn = '2024-04-10'
+  const filter = (row: { seriesId: string }) => row.seriesId === id
+  await create('recurrences', { ...subscription, id, startsOn: scheduledOn, name: 'Conta de Luz', amountCents: 18000,
+    kind: 'expense', accountId: account, cardId: null, groupName: null, variableAmount: true })
+  expect((await forecast('2024-04-01')).series).toContainEqual(expect.objectContaining({ id, groupName: null, variableAmount: true }))
+  await create('recurrence-occurrences', { id, scheduledOn, action: 'confirm', confirmedCents: 20500 })
+  expect((await forecast('2024-04-01')).occurrences.filter(filter)).toMatchObject([{
+    plannedCents: '18000', confirmedCents: '20500', actualCents: null, entryId: null,
+  }])
+  expect((await get('entries?kind=expense&from=2024-04-01&to=2024-04-30')).json().count).toBe(0)
+  expect((await post('recurrence-occurrences', { id, scheduledOn, action: 'adjust', amountCents: 9900, expectedOn: scheduledOn })).statusCode).toBe(409)
+
+  const entryId = randomUUID()
+  const partialId = randomUUID()
+  for (const [entry, amountCents] of [[entryId, 20500], [partialId, 10000]] as const) {
+    await create('entries', { id: entry, kind: 'expense', instrumentId: account, description: 'Luz de abril',
+      amountCents, occurredOn: '2024-05-02' })
+  }
+  expect((await get(`recurrence-candidates?id=${id}&scheduledOn=${scheduledOn}`)).json()).toMatchObject([{ id: entryId }])
+  expect((await post('recurrence-occurrences', { id, scheduledOn, action: 'link', entryId: partialId })).statusCode).toBe(422)
+  await create('recurrence-occurrences', { id, scheduledOn, action: 'link', entryId })
+  expect((await forecast('2024-04-01')).occurrences.filter(filter)).toMatchObject([{
+    entryId, plannedCents: '18000', confirmedCents: '20500', actualCents: '20500', expectedOn: scheduledOn, on: '2024-05-02',
+  }])
+  expect((await forecast('2024-05-01')).occurrences.filter(filter)).toMatchObject([{
+    expectedOn: '2024-05-10', entryId: null, plannedCents: '18000', confirmedCents: null,
+  }])
+  expect((await report('2024-05-01')).occurrences.filter((row: { entryId: string }) => row.entryId === entryId)).toHaveLength(1)
+  expect((await post('recurrence-occurrences', { id, scheduledOn, action: 'unconfirm' })).statusCode).toBe(409)
+  expect((await get('entries?kind=expense&from=2024-05-01&to=2024-05-31')).json().count).toBe(2)
+})
+
+it('organiza uma recorrência existente e ajusta apenas a estimativa do mês escolhido', async () => {
+  const id = randomUUID()
+  const startsOn = '2024-08-11'
+  await create('recurrences', { ...subscription, id, startsOn, name: 'Conta de Água' })
+  const settings = { id, groupName: '  Casa  ', variableAmount: true }
+  const againstOwner = { ...outsider, url: owner.url }
+  expect((await get('expense-forecast?month=2024-08-01', againstOwner)).statusCode).toBe(404)
+  expect((await post('expense-forecast-settings', settings, againstOwner)).statusCode).toBe(404)
+  await create('expense-forecast-settings', settings)
+  await create('recurrence-occurrences', { id, scheduledOn: startsOn, action: 'adjust', amountCents: 3900, expectedOn: startsOn })
+  await create('recurrence-occurrences', { id, scheduledOn: startsOn, action: 'confirm', confirmedCents: 0 })
+  const first = await forecast('2024-08-01')
+  expect(first.series).toContainEqual(expect.objectContaining({ id, groupName: 'Casa', variableAmount: true }))
+  expect(first.occurrences).toContainEqual(expect.objectContaining({ seriesId: id, plannedCents: '3900', confirmedCents: '0' }))
+  await create('recurrence-occurrences', { id, scheduledOn: startsOn, action: 'unconfirm' })
+  expect((await forecast('2024-08-01')).occurrences).toContainEqual(expect.objectContaining({ seriesId: id, plannedCents: '3900', confirmedCents: null }))
+  expect((await forecast('2024-09-01')).occurrences).toContainEqual(expect.objectContaining({ seriesId: id, plannedCents: '2400', confirmedCents: null }))
+})
+
+it('mantém previsões confirmadas e exclui receitas do relatório de gastos', async () => {
+  const startsOn = todayInBrasilia()
+  const id = randomUUID()
+  const incomeId = randomUUID()
+  await create('recurrences', { ...subscription, id, startsOn, name: 'Despesa confirmada' })
+  await create('recurrences', { ...subscription, id: incomeId, kind: 'income', startsOn, cardId: null, accountId: account })
+  expect((await post('recurrence-occurrences', { id: incomeId, scheduledOn: startsOn, action: 'confirm', confirmedCents: 20 })).statusCode).toBe(422)
+  await create('recurrence-occurrences', { id, scheduledOn: startsOn, action: 'confirm', confirmedCents: 20 })
+  expect((await post('recurrence-versions', { ...terms, id, effectiveOn: startsOn, cardId: card, active: false })).statusCode).toBe(409)
+  expect((await forecast(`${startsOn.slice(0, 7)}-01`)).series).not.toContainEqual(expect.objectContaining({ id: incomeId }))
+})

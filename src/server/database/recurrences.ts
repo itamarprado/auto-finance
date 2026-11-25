@@ -8,10 +8,12 @@ import { withFinancialLock } from './transaction.ts'
 type Kind = 'subscription' | 'expense' | 'income'
 type Instrument = { accountId: string | null; cardId: string | null }
 type TermsInput = Instrument & { amountCents: number; endsOn: string | null; active: boolean }
-export type SeriesInput = TermsInput & { id: string; name: string; cadence: Cadence; kind: Kind; startsOn: string }
+type ForecastSettings = { groupName: string | null; variableAmount: boolean }
+export type ForecastSettingsInput = ForecastSettings & { id: string }
+export type SeriesInput = TermsInput & Partial<ForecastSettings> & { id: string; name: string; cadence: Cadence; kind: Kind; startsOn: string }
 export type VersionInput = TermsInput & { id: string; effectiveOn: string }
-export type OccurrenceInput = { id: string; scheduledOn: string; action: 'adjust' | 'skip' | 'restore' | 'link';
-  expectedOn?: string; amountCents?: number; entryId?: string }
+export type OccurrenceInput = { id: string; scheduledOn: string; action: 'adjust' | 'skip' | 'restore' | 'link' | 'confirm' | 'unconfirm';
+  expectedOn?: string; amountCents?: number; entryId?: string; confirmedCents?: number }
 
 type Actual = Pick<LedgerEntry, 'id' | 'occurredOn' | 'description' | 'amountCents' | 'accountId' | 'cardId'>
 type SeriesCalendar = {
@@ -55,6 +57,7 @@ function occurrence(calendar: SeriesCalendar, scheduledOn: string) {
     seriesId: calendar.series.id, name: calendar.series.name, kind: calendar.series.kind as Kind,
     scheduledOn, expectedOn, on: actual ? dateText(actual.occurredOn) : expectedOn,
     plannedCents: (exception?.amountCents ?? version.amountCents).toString(),
+    confirmedCents: exception?.confirmedCents?.toString() ?? null,
     actualCents: actual?.amountCents.toString() ?? null, entryId: actual?.id ?? null,
     description: actual?.description ?? null, skipped: exception?.skipped ?? false,
     accountId: actual ? actual.accountId : version.accountId, cardId: actual ? actual.cardId : version.cardId,
@@ -96,14 +99,17 @@ function nextOccurrence(calendar: SeriesCalendar, today: string) {
   return choices.sort((a, b) => a.on.localeCompare(b.on))[0] ?? null
 }
 
-export async function recurrenceReport(prisma: PrismaClient, workspaceId: string, month: string) {
+export async function recurrenceReport(prisma: PrismaClient, workspaceId: string, month: string, view: 'agenda' | 'forecast' = 'agenda') {
   const last = monthEnd(month)
   const today = todayInBrasilia()
   const now = sqlDate(today)
   const from = sqlDate(month)
   const to = sqlDate(last)
   return prisma.$transaction(async (transaction) => {
-    const series = await transaction.recurringSeries.findMany({ where: { workspaceId }, orderBy: [{ name: 'asc' }, { id: 'asc' }] })
+    const series = await transaction.recurringSeries.findMany({
+      where: { workspaceId, kind: view === 'forecast' ? { in: ['expense', 'subscription'] } : undefined },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    })
     const versions = partition(await transaction.recurrenceVersion.findMany({
       where: { workspaceId }, orderBy: { effectiveOn: 'asc' },
     }))
@@ -133,18 +139,22 @@ export async function recurrenceReport(prisma: PrismaClient, workspaceId: string
       }
       for (const key of keys) {
         const row = occurrence(calendar, key)
-        if (row && row.on >= month && row.on <= last) occurrences.push(row)
+        if (!row || (view === 'forecast' && row.skipped)) continue
+        const date = view === 'forecast' ? row.expectedOn : row.on
+        if (date >= month && date <= last) occurrences.push(row)
       }
       const next = nextOccurrence(calendar, today)
       const terms = versionAt(calendar.versions, today) ?? calendar.versions[0]
       return {
         id: record.id, name: record.name, kind: record.kind as Kind, cadence, startsOn, next,
+        groupName: record.groupName, variableAmount: record.variableAmount,
         changeOn: nextScheduled(startsOn, cadence, today) ?? null,
         amountCents: terms.amountCents.toString(), accountId: terms.accountId, cardId: terms.cardId,
         endsOn: terms.endsOn ? dateText(terms.endsOn) : null,
       }
     })
-    occurrences.sort((a, b) => a.on.localeCompare(b.on) || a.name.localeCompare(b.name) || a.scheduledOn.localeCompare(b.scheduledOn))
+    const sortDate = view === 'forecast' ? 'expectedOn' : 'on'
+    occurrences.sort((a, b) => a[sortDate].localeCompare(b[sortDate]) || a.name.localeCompare(b.name) || a.scheduledOn.localeCompare(b.scheduledOn))
     return { series: overview, occurrences }
   }, { isolationLevel: 'RepeatableRead' })
 }
@@ -160,13 +170,27 @@ function validateTerms(kind: string, date: string, terms: TermsInput) {
     accountId: terms.accountId, cardId: terms.cardId, active: terms.active }
 }
 
+function forecastSettings(input: Partial<ForecastSettings>) {
+  const groupName = privacyText(input.groupName ?? '')
+  if (groupName.length > 80) throw new FinancialInputError('Informe um grupo de até 80 caracteres.')
+  return { groupName: groupName || null, variableAmount: input.variableAmount ?? false }
+}
+
+export async function configureForecast(prisma: PrismaClient, workspaceId: string, input: ForecastSettingsInput) {
+  const { count } = await prisma.recurringSeries.updateMany({
+    where: { workspaceId, id: input.id, kind: { in: ['expense', 'subscription'] } }, data: forecastSettings(input),
+  })
+  if (!count) throw new FinancialInputError('Despesa recorrente não encontrada neste espaço.', 404)
+  return true
+}
+
 export function addRecurrence(prisma: PrismaClient, workspaceId: string, input: SeriesInput) {
   return withFinancialLock(prisma, workspaceId, async (transaction) => {
     const name = privacyText(input.name.trim())
     if (!name || name.length > 120) throw new FinancialInputError('Informe um nome de até 120 caracteres.')
     const terms = validateTerms(input.kind, input.startsOn, input)
     const { count } = await transaction.recurringSeries.createMany({
-      data: { workspaceId, id: input.id, name, kind: input.kind, cadence: input.cadence, startsOn: sqlDate(input.startsOn) },
+      data: { workspaceId, id: input.id, name, kind: input.kind, cadence: input.cadence, startsOn: sqlDate(input.startsOn), ...forecastSettings(input) },
       skipDuplicates: true,
     })
     if (count === 0) return false
@@ -194,10 +218,10 @@ export function changeRecurrence(prisma: PrismaClient, workspaceId: string, inpu
       where: { workspaceId, seriesId: series.id, effectiveOn: { gt: effectiveOn } }, orderBy: { effectiveOn: 'asc' },
     })
     const linked = await transaction.recurrenceOccurrence.findFirst({ where: {
-      workspaceId, seriesId: series.id, entryId: { not: null },
+      workspaceId, seriesId: series.id, OR: [{ entryId: { not: null } }, { confirmedCents: { not: null } }],
       scheduledOn: { gte: effectiveOn, lt: subsequent?.effectiveOn },
     } })
-    if (linked) throw new FinancialInputError('Há ocorrências conciliadas nesta vigência. Escolha uma data posterior.', 409)
+    if (linked) throw new FinancialInputError('Há ocorrências confirmadas ou conciliadas nesta vigência. Escolha uma data posterior.', 409)
     const terms = validateTerms(series.kind, input.effectiveOn, input)
     await transaction.recurrenceVersion.upsert({
       where: { workspaceId_seriesId_effectiveOn: key }, create: { ...key, ...terms }, update: terms,
@@ -230,7 +254,8 @@ export async function recurrenceCandidates(prisma: PrismaClient, workspaceId: st
   const { series, version, exception } = await occurrenceContext(prisma, workspaceId, id, scheduledOn)
   if (exception?.skipped || exception?.entryId) return []
   const rows = await prisma.ledgerEntry.findMany({
-    where: { ...eligibleEntry(workspaceId, series.kind, version), description: search ? { contains: search, mode: 'insensitive' } : undefined },
+    where: { ...eligibleEntry(workspaceId, series.kind, version), amountCents: exception?.confirmedCents ?? undefined,
+      description: search ? { contains: search, mode: 'insensitive' } : undefined },
     select: actualFields, orderBy: [{ occurredOn: 'desc' }, { id: 'asc' }], take: 30,
   })
   return rows.map((row) => ({ ...row, amountCents: row.amountCents.toString(), occurredOn: dateText(row.occurredOn) }))
@@ -242,14 +267,23 @@ export function writeOccurrence(prisma: PrismaClient, workspaceId: string, input
   return withFinancialLock(prisma, workspaceId, async (transaction) => {
     const { series, version, key, exception } = await occurrenceContext(transaction, workspaceId, input.id, input.scheduledOn)
     if (exception?.entryId) throw new FinancialInputError('A ocorrência já foi conciliada.', 409)
-    let patch: Pick<Prisma.RecurrenceOccurrenceUncheckedCreateInput, 'expectedOn' | 'amountCents' | 'skipped' | 'entryId' | 'settledOn'>
+    const isConfirmation = input.action === 'confirm' || input.action === 'unconfirm'
+    if (exception?.confirmedCents != null && input.action !== 'link' && !isConfirmation) {
+      throw new FinancialInputError('Reabra a previsão antes de alterar uma conta confirmada.', 409)
+    }
+    let patch: Pick<Prisma.RecurrenceOccurrenceUncheckedCreateInput, 'expectedOn' | 'amountCents' | 'skipped' | 'entryId' | 'settledOn' | 'confirmedCents'>
     if (input.action === 'link') {
       if (!input.entryId || exception?.skipped) throw new FinancialInputError('Escolha um lançamento disponível para conciliar.')
       const entry = await transaction.ledgerEntry.findFirst({
-        where: eligibleEntry(workspaceId, series.kind, version, input.entryId), select: { id: true, occurredOn: true },
+        where: { ...eligibleEntry(workspaceId, series.kind, version, input.entryId), amountCents: exception?.confirmedCents ?? undefined },
+        select: { id: true, occurredOn: true },
       })
-      if (!entry) throw new FinancialInputError('O lançamento não corresponde ao meio de cobrança ou já foi vinculado.', 422)
+      if (!entry) throw new FinancialInputError('Escolha um lançamento disponível que corresponda ao meio de cobrança e ao valor confirmado, quando houver.')
       patch = { entryId: entry.id, settledOn: entry.occurredOn }
+    } else if (isConfirmation) {
+      if (series.kind === 'income' || exception?.skipped) throw new FinancialInputError('Selecione uma despesa prevista que esteja ativa.')
+      if (input.action === 'confirm' && input.confirmedCents === undefined) throw new FinancialInputError('Informe o valor da conta.')
+      patch = { confirmedCents: input.action === 'unconfirm' ? null : BigInt(input.confirmedCents!) }
     } else if (input.action === 'adjust') {
       if (!input.expectedOn || input.amountCents === undefined) throw new FinancialInputError('Informe a data e o valor previstos.')
       patch = { skipped: false, expectedOn: sqlDate(input.expectedOn), amountCents: BigInt(input.amountCents) }
