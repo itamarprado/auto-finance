@@ -379,6 +379,20 @@ body:has(.finance-shell) {
 .split-fields legend { font-weight: 600; }
 .split-participant { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: start; }
 .split-participant > label { flex: 1 1 9rem; }
+
+.recurrence-cards, .recurrence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  align-items: center;
+}
+.recurrence-cards { padding: .7rem 1.1rem 1rem; }
+.recurrence-cards button, .recurrence-actions button {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.financial-rows .recurrence-actions { flex: 0 1 auto; }
 .finance-download { display: inline-flex; align-items: center; text-decoration: none; }
 .ledger-text-action { display: block; padding: .2rem 0; border: 0; background: transparent; color: #155c70; font: inherit; font-size: .76rem; text-decoration: underline; cursor: pointer; }
 

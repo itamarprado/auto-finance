@@ -69,6 +69,7 @@ async function receiptSources(prisma: Prisma.TransactionClient, workspaceId: str
           OR (e.kind = 'income' AND a.holder_id = ${people.toHolderId}::uuid))
         AND NOT EXISTS (SELECT 1 FROM auto_finance.expense_splits s WHERE (s.workspace_id, s.entry_id) = (e.workspace_id, e.id))
         AND NOT EXISTS (SELECT 1 FROM auto_finance.split_settlements r WHERE (r.workspace_id, r.entry_id) = (e.workspace_id, e.id))
+        AND NOT EXISTS (SELECT 1 FROM auto_finance.recurrence_occurrences o WHERE (o.workspace_id, o.entry_id) = (e.workspace_id, e.id))
       UNION ALL
       SELECT t.id, 'transfer', t.description, t.amount_cents, t.occurred_on, debit.name || ' → ' || credit.name
       FROM auto_finance.financial_adjustments t
