@@ -21,6 +21,8 @@ O saldo consolidado considera as contas selecionadas para esse total e os movime
 
 Em **Faturas**, filtre o período, abra o grupo de um cartão e selecione a fatura para conferir compras, parcelas, pagamentos e estornos na tela de detalhe. Use **Nova compra parcelada** para dividir um valor entre ciclos. Em **Fluxo de caixa**, consulte movimentações efetivadas por conta e período e registre transferências entre contas. [Regras de faturas e caixa](decisions/10-faturas-e-caixa.md) · [Navegação de faturas](decisions/11-navegacao-de-faturas.md)
 
+Em **Importar CSV**, escolha a conta ou o cartão, baixe o modelo, gere a prévia e revise possíveis vínculos antes de confirmar. Use **Classificar** em uma linha do Extrato para editar categoria e tags. O **Fechamento mensal** reúne os totais do extrato e as saídas efetivas de caixa. O CSV pode ser baixado do fechamento ou do extrato filtrado. [Formato e regras de importação](decisions/12-importacao-e-fechamento.md)
+
 ### Preparar o banco
 
 Com Docker Compose, defina `POSTGRES_PASSWORD` em `.env` e execute:

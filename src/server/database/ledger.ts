@@ -39,6 +39,8 @@ export interface EntryFilter {
   cardId?: string
   kind?: EntryInput['kind'] | 'refund'
   search?: string
+  category?: string
+  tag?: string
   page?: number
 }
 
@@ -59,14 +61,25 @@ export interface Statement {
     amountCents: string
     instrumentName: string
     holderName: string
+    category: string | null
+    tags: string[]
   })[]
   count: number
   incomeCents: string
   expenseCents: string
   purchaseCents: string
   refundCents: string
+  categories: CategoryTotals[]
   page: number
   pageSize: number
+}
+
+export interface CategoryTotals {
+  category: string | null
+  incomeCents: string
+  expenseCents: string
+  purchaseCents: string
+  refundCents: string
 }
 
 export async function getCatalog(database: Pool, prisma: PrismaClient, workspaceId: string): Promise<LedgerCatalog> {
@@ -111,22 +124,21 @@ export async function getCatalog(database: Pool, prisma: PrismaClient, workspace
   }
 }
 
-const pageSize = 25
-
-export async function getStatement(database: Pool, workspaceId: string, filter: EntryFilter): Promise<Statement> {
+export async function getStatement(database: Pool, workspaceId: string, filter: EntryFilter,
+  { pageSize = 25, byCategory = false } = {}): Promise<Statement> {
   const page = filter.page ?? 1
   const { rows: [result] } = await database.query<Omit<Statement, 'page' | 'pageSize'>>(
     `WITH movements AS (
-       SELECT id, workspace_id, account_id, card_id, kind, description, amount_cents, occurred_on, created_at, 'entry' AS source
+       SELECT id, workspace_id, account_id, card_id, kind, description, amount_cents, occurred_on, created_at, 'entry' AS source, category, tags
        FROM auto_finance.ledger_entries WHERE workspace_id = $1
        UNION ALL
-       SELECT id, workspace_id, NULL::uuid, card_id, 'purchase', description, total_cents, purchased_on, created_at, 'plan'
+       SELECT id, workspace_id, NULL::uuid, card_id, 'purchase', description, total_cents, purchased_on, created_at, 'plan', NULL::text, '{}'::text[]
        FROM auto_finance.card_installment_plans WHERE workspace_id = $1
        UNION ALL
-       SELECT id, workspace_id, NULL::uuid, card_id, 'refund', description, amount_cents, occurred_on, NULL::timestamptz, 'adjustment'
+       SELECT id, workspace_id, NULL::uuid, card_id, 'refund', description, amount_cents, occurred_on, NULL::timestamptz, 'adjustment', NULL::text, '{}'::text[]
        FROM auto_finance.financial_adjustments WHERE workspace_id = $1 AND kind = 'refund'
      ), filtered AS (
-       SELECT l.id, l.kind, l.description, l.amount_cents, l.occurred_on, l.created_at, l.source,
+       SELECT l.id, l.kind, l.description, l.amount_cents, l.occurred_on, l.created_at, l.source, l.category, l.tags,
               COALESCE(a.name, c.name) AS instrument_name, h.name AS holder_name
        FROM movements l
        LEFT JOIN auto_finance.accounts a ON a.workspace_id = l.workspace_id AND a.id = l.account_id
@@ -139,23 +151,34 @@ export async function getStatement(database: Pool, workspaceId: string, filter: 
          AND ($5::uuid IS NULL OR l.card_id = $5)
          AND ($6::text IS NULL OR l.kind = $6)
          AND ($7::text IS NULL OR strpos(lower(l.description), lower($7)) > 0)
+         AND ($10::text IS NULL OR lower(l.category) = lower($10))
+         AND ($11::text IS NULL OR EXISTS (SELECT 1 FROM unnest(l.tags) AS tag WHERE lower(tag) = lower($11)))
      ), page_entries AS (
-       SELECT id, kind, description, source, amount_cents::text AS "amountCents",
+       SELECT id, kind, description, source, category, tags, amount_cents::text AS "amountCents",
               to_char(occurred_on, 'YYYY-MM-DD') AS "occurredOn",
               instrument_name AS "instrumentName", holder_name AS "holderName",
               occurred_on, created_at
        FROM filtered ORDER BY occurred_on DESC, created_at DESC NULLS LAST, id DESC, source LIMIT $8 OFFSET $9
+     ), category_totals AS (
+       SELECT min(category) AS category,
+              coalesce(sum(amount_cents) FILTER (WHERE kind = 'income'), 0)::text AS "incomeCents",
+              coalesce(sum(amount_cents) FILTER (WHERE kind = 'expense'), 0)::text AS "expenseCents",
+              coalesce(sum(amount_cents) FILTER (WHERE kind = 'purchase'), 0)::text AS "purchaseCents",
+              coalesce(sum(amount_cents) FILTER (WHERE kind = 'refund'), 0)::text AS "refundCents"
+       FROM filtered WHERE $12::boolean GROUP BY lower(category)
      )
      SELECT count(*)::integer AS count,
             coalesce(sum(amount_cents) FILTER (WHERE kind = 'income'), 0)::text AS "incomeCents",
             coalesce(sum(amount_cents) FILTER (WHERE kind = 'expense'), 0)::text AS "expenseCents",
             coalesce(sum(amount_cents) FILTER (WHERE kind = 'purchase'), 0)::text AS "purchaseCents",
             coalesce(sum(amount_cents) FILTER (WHERE kind = 'refund'), 0)::text AS "refundCents",
+            coalesce((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.category NULLS LAST) FROM category_totals c), '[]') AS categories,
             coalesce((SELECT jsonb_agg(to_jsonb(p) - 'occurred_on' - 'created_at'
                 ORDER BY p.occurred_on DESC, p.created_at DESC NULLS LAST, p.id DESC, p.source) FROM page_entries p), '[]') AS entries
      FROM filtered`,
     [workspaceId, filter.from ?? null, filter.to ?? null, filter.accountId ?? null,
-      filter.cardId ?? null, filter.kind ?? null, filter.search ?? null, pageSize, (page - 1) * pageSize],
+      filter.cardId ?? null, filter.kind ?? null, filter.search ?? null, pageSize, (page - 1) * pageSize,
+      filter.category ?? null, filter.tag ?? null, byCategory],
   )
   return { ...result, page, pageSize }
 }
