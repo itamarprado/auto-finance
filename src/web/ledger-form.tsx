@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { dateInBrasilia } from '../domain/date.ts'
 import { parseBrlCents } from '../domain/money.ts'
 import type { AccountInput, CardInput, EntryInput, HolderInput, LedgerCatalog } from '../server/database/ledger.ts'
@@ -9,9 +9,9 @@ type NewRecord = HolderInput | AccountInput | CardInput | EntryInput
 
 export const sectionLabels = { entries: 'Extrato', holders: 'Titulares', accounts: 'Contas', cards: 'Cartões' }
 export const formLabels = { entries: 'Novo lançamento', holders: 'Novo titular', accounts: 'Nova conta', cards: 'Novo cartão' }
-export const entryLabels = { income: 'Receita', expense: 'Despesa', purchase: 'Compra no cartão' }
+export const entryLabels = { income: 'Receita', expense: 'Despesa', purchase: 'Compra no cartão', refund: 'Estorno no cartão' }
 
-function field(data: FormData, name: string): string {
+export function field(data: FormData, name: string): string {
   return String(data.get(name) ?? '').trim()
 }
 
@@ -52,46 +52,12 @@ export function LedgerForm({ section, catalog, dismiss, save }: {
   dismiss: () => void
   save: (record: NewRecord) => Promise<void>
 }) {
-  const dialog = useRef<HTMLDialogElement>(null)
-  const [id] = useState(() => crypto.randomUUID())
   const [kind, setKind] = useState<EntryInput['kind']>(catalog.accounts.length ? 'expense' : 'purchase')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    const node = dialog.current
-    node?.showModal()
-    return () => { node?.close() }
-  }, [])
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setSaving(true)
-    setError('')
-    try {
-      await save(recordFromForm(new FormData(event.currentTarget), section, id))
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Não foi possível salvar.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
   const instruments = kind === 'purchase' ? catalog.cards : catalog.accounts
 
   return (
-    <dialog
-      className="ledger-dialog"
-      ref={dialog}
-      aria-labelledby="ledger-form-title"
-      onCancel={(event) => { event.preventDefault(); if (!saving) dismiss() }}
-    >
-      <header>
-        <h2 id="ledger-form-title">{formLabels[section]}</h2>
-        <button type="button" className="ledger-quiet" onClick={dismiss} disabled={saving} aria-label="Fechar">×</button>
-      </header>
-      {error && <p className="notice" role="alert">{error}</p>}
-      <form method="post" onSubmit={(event) => { void submit(event) }}>
+    <RecordDialog title={formLabels[section]} dismiss={dismiss}
+      save={(fields, id) => save(recordFromForm(fields, section, id))}>
         {section === 'entries' ? (
           <>
             <label>Descrição<input name="description" maxLength={160} required /></label>
@@ -150,6 +116,50 @@ export function LedgerForm({ section, catalog, dismiss, save }: {
             )}
           </>
         )}
+    </RecordDialog>
+  )
+}
+
+export function RecordDialog({ title, dismiss, save, children }: {
+  title: string
+  dismiss: () => void
+  save: (fields: FormData, id: string) => Promise<void>
+  children: ReactNode
+}) {
+  const dialog = useRef<HTMLDialogElement>(null)
+  const [id] = useState(() => crypto.randomUUID())
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const node = dialog.current
+    node?.showModal()
+    return () => { node?.close() }
+  }, [])
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSaving(true)
+    setError('')
+    try {
+      await save(new FormData(event.currentTarget), id)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Não foi possível salvar.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <dialog className="ledger-dialog" ref={dialog} aria-labelledby="ledger-form-title"
+      onCancel={(event) => { event.preventDefault(); if (!saving) dismiss() }}>
+      <header>
+        <h2 id="ledger-form-title">{title}</h2>
+        <button type="button" className="ledger-quiet" onClick={dismiss} disabled={saving} aria-label="Fechar">×</button>
+      </header>
+      {error && <p className="notice" role="alert">{error}</p>}
+      <form method="post" onSubmit={(event) => { void submit(event) }}>
+        {children}
         <footer>
           <button type="button" className="ledger-quiet" onClick={dismiss} disabled={saving}>Cancelar</button>
           <button type="submit" className="ledger-primary" disabled={saving}>{saving ? 'Salvando…' : 'Salvar'}</button>

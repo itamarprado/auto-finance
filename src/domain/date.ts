@@ -8,3 +8,10 @@ const brasiliaDate = new Intl.DateTimeFormat('sv-SE', {
 export function dateInBrasilia(instant = new Date()): string {
   return brasiliaDate.format(instant)
 }
+
+export function currentMonthBounds() {
+  const from = `${dateInBrasilia().slice(0, 7)}-01`
+  const end = new Date(`${from}T00:00:00Z`)
+  end.setUTCMonth(end.getUTCMonth() + 1, 0)
+  return { from, to: end.toISOString().slice(0, 10) }
+}
