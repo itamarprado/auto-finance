@@ -27,6 +27,7 @@ model Account {
   adjustments         FinancialAdjustment[] @relation("OriginAccount")
   incomingAdjustments FinancialAdjustment[] @relation("DestinationAccount")
   importBatches       ImportBatch[]
+  recurrenceVersions  RecurrenceVersion[]
 
   @@id([workspaceId, id])
   @@map("accounts")
@@ -63,6 +64,7 @@ model Card {
   plans            CardInstallmentPlan[]
   adjustments      FinancialAdjustment[]
   importBatches    ImportBatch[]
+  recurrenceVersions RecurrenceVersion[]
 
   @@id([workspaceId, id])
   @@map("cards")
@@ -105,6 +107,7 @@ model LedgerEntry {
   importRows           ImportRow[]
   expenseSplit         ExpenseSplit?
   splitSettlement      SplitSettlement?
+  recurrenceOccurrence RecurrenceOccurrence?
 
   @@id([workspaceId, id])
   @@index([workspaceId, occurredOn(sort: Desc), createdAt(sort: Desc), id(sort: Desc)], map: "ledger_entries_workspace_order_idx")
@@ -162,6 +165,7 @@ model Workspace {
   importBatches    ImportBatch[]
   expenseSplits    ExpenseSplit[]
   splitSettlements SplitSettlement[]
+  recurringSeries  RecurringSeries[]
 
   @@map("workspaces")
   @@schema("auto_finance")
@@ -309,6 +313,60 @@ model SplitSettlementAllocation {
   @@id([workspaceId, settlementId, splitId, holderId])
   @@index([workspaceId, splitId, holderId], map: "split_allocations_share_idx")
   @@map("split_settlement_allocations")
+  @@schema("auto_finance")
+}
+
+model RecurringSeries {
+  workspaceId String @map("workspace_id") @db.Uuid
+  id          String @db.Uuid
+  name        String
+  kind        String
+  cadence     String
+  startsOn    DateTime @map("starts_on") @db.Date
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  versions    RecurrenceVersion[]
+  occurrences RecurrenceOccurrence[]
+
+  @@id([workspaceId, id])
+  @@map("recurring_series")
+  @@schema("auto_finance")
+}
+
+model RecurrenceVersion {
+  workspaceId String @map("workspace_id") @db.Uuid
+  seriesId    String @map("series_id") @db.Uuid
+  effectiveOn DateTime @map("effective_on") @db.Date
+  amountCents BigInt @map("amount_cents")
+  accountId   String? @map("account_id") @db.Uuid
+  cardId      String? @map("card_id") @db.Uuid
+  endsOn      DateTime? @map("ends_on") @db.Date
+  active      Boolean @default(true)
+  series      RecurringSeries @relation(fields: [workspaceId, seriesId], references: [workspaceId, id], onDelete: Cascade, onUpdate: NoAction)
+  account     Account? @relation(fields: [workspaceId, accountId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  card        Card? @relation(fields: [workspaceId, cardId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([workspaceId, seriesId, effectiveOn])
+  @@map("recurrence_versions")
+  @@schema("auto_finance")
+}
+
+model RecurrenceOccurrence {
+  workspaceId String @map("workspace_id") @db.Uuid
+  seriesId    String @map("series_id") @db.Uuid
+  scheduledOn DateTime @map("scheduled_on") @db.Date
+  expectedOn  DateTime? @map("expected_on") @db.Date
+  amountCents BigInt? @map("amount_cents")
+  skipped     Boolean @default(false)
+  entryId     String? @map("entry_id") @db.Uuid
+  settledOn   DateTime? @map("settled_on") @db.Date
+  series      RecurringSeries @relation(fields: [workspaceId, seriesId], references: [workspaceId, id], onDelete: Cascade, onUpdate: NoAction)
+  entry       LedgerEntry? @relation(fields: [workspaceId, entryId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([workspaceId, seriesId, scheduledOn])
+  @@unique([workspaceId, entryId])
+  @@index([workspaceId, expectedOn], map: "recurrence_occurrences_expected_idx")
+  @@index([workspaceId, settledOn], map: "recurrence_occurrences_settled_idx")
+  @@map("recurrence_occurrences")
   @@schema("auto_finance")
 }
 

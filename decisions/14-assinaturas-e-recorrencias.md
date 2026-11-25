@@ -1,0 +1,9 @@
+# Assinaturas e recorrências
+
+A tela mostra a agenda de um mês e as séries cadastradas. Em **Visão geral**, as séries informam o meio de cobrança e incluem contas, cartões e cobranças com meio a definir. Cada cartão cadastrado tem um seletor, mesmo sem assinaturas. O nome, o titular e os quatro últimos dígitos disponíveis ajudam a distinguir cartões semelhantes. O subtotal é a soma das cobranças do mês exibido, com valores confirmados e ainda previstos discriminados. Receitas recorrentes aparecem separadamente.
+
+Uma série pode representar uma assinatura, uma despesa recorrente ou uma receita recorrente. As frequências iniciais são semanal, mensal e anual. Nos meses mais curtos, o vencimento cai no último dia e volta ao dia de origem quando houver. A data final vale inclusive. Alterações de valor, meio de cobrança ou situação têm vigência em uma data da agenda original e preservam as ocorrências anteriores. Suspender ou retomar usa a mesma regra de vigência.
+
+Em uma ocorrência individual, é possível alterar data e valor previstos, pular ou restaurar a previsão original. A data real prevalece no agrupamento mensal quando há conciliação explícita com um lançamento existente. O valor real substitui a previsão no subtotal, preservando a data e o valor previstos para consulta. Cada lançamento pode ser conciliado uma vez. A fatura, o extrato e o fluxo de caixa mantêm os lançamentos efetivados na origem.
+
+A migração 0007 cria as séries, vigências e exceções. Chaves compostas restringem os vínculos ao espaço financeiro. As alterações passam pelo bloqueio financeiro por espaço e conferem novamente o vínculo antes de gravar. Nesta etapa, a previsão fica na tela de recorrências. Notificações com o app fechado, reconhecimento automático, projeção consolidada de caixa e alteração da frequência de uma série existente são evoluções separadas.

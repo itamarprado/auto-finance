@@ -7,6 +7,8 @@ import { addInstallment, addPayment, addRefund, addTransfer, FinancialInputError
 import type { InstallmentInput, PaymentInput, RefundInput, ReversalInput, TransferInput } from '../database/invoices.ts'
 import { addAccount, addCard, addEntry, addHolder, getCatalog, getStatement } from '../database/ledger.ts'
 import type { AccountInput, CardInput, EntryFilter, EntryInput, HolderInput } from '../database/ledger.ts'
+import { addRecurrence, changeRecurrence, recurrenceCandidates, recurrenceReport, writeOccurrence } from '../database/recurrences.ts'
+import type { OccurrenceInput, SeriesInput, VersionInput } from '../database/recurrences.ts'
 import { addSettlement, addSplit, listReceiptSources, listSplits, listSplitSources } from '../database/splits.ts'
 import type { SettlementInput, SplitInput } from '../database/splits.ts'
 import { findWorkspace } from '../database/workspaces.ts'
@@ -109,6 +111,44 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, pr
     }, (request) => getCatalog(database, prisma, request.params.workspaceId))
 
     registerImportRoutes(ledger, prisma)
+
+    const terms = { id: uuid, amountCents, active: { type: 'boolean' },
+      accountId: { anyOf: [uuid, { type: 'null' }] }, cardId: { anyOf: [uuid, { type: 'null' }] },
+      endsOn: { anyOf: [date, { type: 'null' }] } }
+    const series = { ...terms, name, startsOn: date,
+      kind: { type: 'string', enum: ['subscription', 'expense', 'income'] },
+      cadence: { type: 'string', enum: ['weekly', 'monthly', 'yearly'] } }
+    const version = { ...terms, effectiveOn: date }
+    const exception = { id: uuid, scheduledOn: date, expectedOn: date, amountCents, entryId: uuid,
+      action: { type: 'string', enum: ['adjust', 'skip', 'restore', 'link'] } }
+    ledger.get<{ Params: WorkspaceParams; Querystring: { month: string } }>('/ledger/recurrences', {
+      schema: { params: workspaceParamsSchema, querystring: {
+        type: 'object', required: ['month'], additionalProperties: false, properties: { month: cycleMonth },
+      } },
+    }, ({ params, query }, reply) => validDate(query.month) ? recurrenceReport(prisma, params.workspaceId, query.month) : invalidDate(reply))
+    ledger.get<{ Params: WorkspaceParams; Querystring: { id: string; scheduledOn: string; search?: string } }>('/ledger/recurrence-candidates', {
+      schema: { params: workspaceParamsSchema, querystring: {
+        type: 'object', required: ['id', 'scheduledOn'], additionalProperties: false,
+        properties: { id: uuid, scheduledOn: date, search: { type: 'string', maxLength: 160 } },
+      } },
+    }, async ({ params, query }, reply) => {
+      if (!validDate(query.scheduledOn)) return invalidDate(reply)
+      try {
+        return await recurrenceCandidates(prisma, params.workspaceId, query.id, query.scheduledOn, query.search)
+      } catch (error) {
+        if (error instanceof FinancialInputError) return reply.code(error.status).send({ message: error.message })
+        throw error
+      }
+    })
+    ledger.post<{ Params: WorkspaceParams; Body: SeriesInput }>('/ledger/recurrences', bodySchema(series, Object.keys(series)),
+      ({ params, body }, reply) => [body.startsOn, body.endsOn].every((value) => value === null || validDate(value))
+        ? save(reply, body.id, () => addRecurrence(prisma, params.workspaceId, body)) : invalidDate(reply))
+    ledger.post<{ Params: WorkspaceParams; Body: VersionInput }>('/ledger/recurrence-versions', bodySchema(version, Object.keys(version)),
+      ({ params, body }, reply) => [body.effectiveOn, body.endsOn].every((value) => value === null || validDate(value))
+        ? save(reply, body.id, () => changeRecurrence(prisma, params.workspaceId, body)) : invalidDate(reply))
+    ledger.post<{ Params: WorkspaceParams; Body: OccurrenceInput }>('/ledger/recurrence-occurrences', bodySchema(exception, ['id', 'scheduledOn', 'action']),
+      ({ params, body }, reply) => [body.scheduledOn, body.expectedOn].every((value) => value === undefined || validDate(value))
+        ? save(reply, body.id, () => writeOccurrence(prisma, params.workspaceId, body)) : invalidDate(reply))
 
     const listFields = { page, search: { type: 'string', maxLength: 160 } }
     const paging = { type: 'object', additionalProperties: false, properties: listFields }

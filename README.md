@@ -25,6 +25,8 @@ Em **Importar CSV**, escolha a conta ou o cartão, baixe o modelo, gere a prévi
 
 Em **Rateios e acertos**, selecione uma despesa existente, indique quem pagou e divida o total em partes iguais ou valores fixos. Registre o pagamento do acerto no Extrato ou como transferência no Fluxo de caixa. Depois, vincule a movimentação no rateio para acompanhar o saldo e o histórico. [Regras de rateio](decisions/13-rateios-e-acertos.md)
 
+Em **Assinaturas e recorrências**, cadastre a frequência e o meio de cobrança, abra a **Visão geral** ou filtre por cartão. Use a agenda mensal para ajustar uma ocorrência, pulá-la ou conciliá-la com o Extrato. A troca de cartão vale a partir da ocorrência escolhida e preserva o histórico. [Regras de recorrência](decisions/14-assinaturas-e-recorrencias.md)
+
 ### Preparar o banco
 
 Com Docker Compose, defina `POSTGRES_PASSWORD` em `.env` e execute:
