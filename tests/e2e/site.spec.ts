@@ -423,3 +423,49 @@ test('exibe visão geral, separa assinaturas por cartão e calcula o subtotal em
   await expect(agenda).toContainText('Revista a identificar')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
+
+test('prevê contas recorrentes com e sem grupo e atualiza o total quando chega a cobrança', async ({ page }) => {
+  await enterBrowserWorkspace(page, 'Espaço de previsão de gastos')
+  const session = await (await page.request.get('/api/auth/session')).json()
+  const ledger = `/api/workspaces/${session.workspaces[0].id}/ledger`
+  const headers = { Origin: new URL(page.url()).origin }
+  const existing = await page.request.post(`${ledger}/recurrences`, { headers, data: {
+    id: randomUUID(), name: 'Conta de Internet', kind: 'subscription', cadence: 'monthly',
+    startsOn: '2024-06-10', endsOn: null, amountCents: 12000, accountId: null, cardId: null, active: true, groupName: 'Casa',
+  } })
+  expect(existing.status()).toBe(201)
+  await page.getByRole('navigation', { name: 'Área financeira' }).getByRole('button', { name: 'Previsão de gastos' }).click()
+  await page.getByLabel('Mês de referência').fill('2024-06')
+  await page.getByRole('button', { name: 'Nova despesa recorrente', exact: true }).click()
+  const form = page.getByRole('dialog', { name: 'Nova despesa recorrente' })
+  await form.getByLabel('Nome', { exact: true }).fill('Conta de Luz')
+  await form.getByLabel('Tipo de valor').selectOption('variable')
+  await form.getByLabel('Valor por ocorrência em reais').fill('180,00')
+  await form.getByLabel('Primeira ocorrência').fill('2024-06-15')
+  await form.getByRole('button', { name: 'Salvar', exact: true }).click()
+  await expect(form).toBeHidden()
+
+  const forecast = page.getByRole('region', { name: 'Resumo da previsão de gastos' })
+  const groups = page.getByRole('region', { name: 'Filtros de previsão' }).getByRole('combobox', { name: 'Grupo', exact: true })
+  const total = forecast.getByText('Total atualizado', { exact: true }).locator('..')
+  const luz = forecast.getByRole('listitem').filter({ hasText: 'Conta de Luz' })
+  await expect(forecast).toContainText('Conta de Internet')
+  await expect(total).toContainText('R$ 300,00')
+  await luz.getByRole('button', { name: 'Confirmar valor', exact: true }).click()
+  const confirm = page.getByRole('dialog', { name: 'Confirmar valor da conta' })
+  await confirm.getByLabel('Valor confirmado em reais').fill('205,00')
+  await confirm.getByRole('button', { name: 'Salvar', exact: true }).click()
+  await expect(luz).toContainText('Valor confirmado manualmente')
+  await expect(luz).toContainText('R$ 25,00 acima')
+  await expect(total).toContainText('R$ 325,00')
+
+  await page.setViewportSize({ width: 360, height: 780 })
+  await groups.selectOption({ label: 'Casa' })
+  await expect(forecast).not.toContainText('Conta de Luz')
+  await expect(total).toContainText('R$ 120,00')
+  await groups.selectOption({ label: 'Sem grupo' })
+  await expect(total).toContainText('R$ 205,00')
+  await page.getByLabel('Mês de referência').fill('2024-07')
+  await expect(total).toContainText('R$ 180,00')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})

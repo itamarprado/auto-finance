@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { dateInBrasilia } from '../domain/date.ts'
+import { confirmedAmount } from '../domain/expense-forecast.ts'
 import { formatBrlCents, parseBrlCents } from '../domain/money.ts'
 import type { LedgerCatalog } from '../server/database/ledger.ts'
 import type { Occurrence, RecurrenceCandidate, RecurrenceReport } from '../server/database/recurrences.ts'
@@ -28,13 +29,13 @@ function cardLabel(card: LedgerCatalog['cards'][number], catalog: LedgerCatalog)
   return [card.name, holder, card.lastFour && `•••• ${card.lastFour}`].filter(Boolean).join(' · ')
 }
 
-function instrumentName(target: Target, catalog: LedgerCatalog) {
+export function instrumentName(target: Target, catalog: LedgerCatalog) {
   const card = catalog.cards.find((item) => item.id === target.cardId)
   if (card) return cardLabel(card, catalog)
   return catalog.accounts.find((item) => item.id === target.accountId)?.name ?? 'Meio de cobrança a definir'
 }
 
-function moneyInput(cents: string) {
+export function moneyInput(cents: string) {
   const value = BigInt(cents)
   return `${value / 100n},${String(value % 100n).padStart(2, '0')}`
 }
@@ -50,19 +51,21 @@ function readTarget(fields: FormData): Target {
   return { accountId: kind === 'account' ? id : null, cardId: kind === 'card' ? id : null }
 }
 
-function SeriesDialog({ series, props, close, write }: {
-  series?: Series; props: Props; close: () => void; write: (resource: string, record: object) => Promise<void>
+export function SeriesDialog({ series, forecast = false, initialDate, props, close, write }: {
+  series?: Series; forecast?: boolean; initialDate?: string; props: Props; close: () => void; write: (resource: string, record: object) => Promise<void>
 }) {
-  const [kind, setKind] = useState<Series['kind']>(series?.kind ?? 'subscription')
+  const [kind, setKind] = useState<Series['kind']>(series?.kind ?? (forecast ? 'expense' : 'subscription'))
   const [instrument, setInstrument] = useState(series?.cardId ? `card:${series.cardId}` : series?.accountId ? `account:${series.accountId}` : '')
-  const start = series?.changeOn ?? dateInBrasilia()
-  return <RecordDialog title={series ? 'Alterar próximas ocorrências' : 'Nova recorrência'} dismiss={close} save={async (fields, id) => {
+  const start = series?.changeOn ?? initialDate ?? dateInBrasilia()
+  const title = series ? 'Alterar próximas ocorrências' : forecast ? 'Nova despesa recorrente' : 'Nova recorrência'
+  return <RecordDialog title={title} dismiss={close} save={async (fields, id) => {
     const terms = { amountCents: amount(fields), endsOn: field(fields, 'endsOn') || null,
       active: field(fields, 'status') !== 'paused', ...readTarget(fields) }
     if (series) {
       await write('recurrence-versions', { ...terms, id: series.id, effectiveOn: field(fields, 'startsOn') })
     } else {
-      await write('recurrences', { ...terms, id, kind, name: field(fields, 'name'), cadence: field(fields, 'cadence'), startsOn: field(fields, 'startsOn') })
+      const settings = forecast ? { groupName: field(fields, 'groupName') || null, variableAmount: field(fields, 'amountType') === 'variable' } : {}
+      await write('recurrences', { ...terms, ...settings, id, kind, name: field(fields, 'name'), cadence: field(fields, 'cadence'), startsOn: field(fields, 'startsOn') })
     }
   }}>
     {series ? <p className="financial-context">{series.name} · {cadenceLabels[series.cadence]}. Escolha uma data da agenda original.</p>
@@ -74,13 +77,15 @@ function SeriesDialog({ series, props, close, write }: {
             setKind(selected)
             if (selected === 'income' && instrument.startsWith('card:')) setInstrument('')
           }}>
-            {Object.entries(kindLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+            {Object.entries(kindLabels).filter(([value]) => !forecast || value !== 'income')
+              .map(([value, label]) => <option value={value} key={value}>{label}</option>)}
           </select></label>
           <label>Frequência<select name="cadence" defaultValue="monthly">
             {Object.entries(cadenceLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
           </select></label>
         </div>
       </>}
+    {forecast && !series && <ForecastFields />}
     <label>Meio de cobrança<select name="instrument" value={instrument} onChange={(event) => setInstrument(event.target.value)}>
       <option value="">A definir</option>
       {props.catalog.accounts.map((account) => <option key={account.id} value={`account:${account.id}`}>{account.name}</option>)}
@@ -98,6 +103,15 @@ function SeriesDialog({ series, props, close, write }: {
   </RecordDialog>
 }
 
+export function ForecastFields({ series }: { series?: Series }) {
+  return <div className="ledger-fields">
+    <label>Tipo de valor<select name="amountType" defaultValue={series?.variableAmount ? 'variable' : 'fixed'}>
+      <option value="fixed">Fixo</option><option value="variable">Variável</option>
+    </select></label>
+    <label>Grupo (opcional)<input name="groupName" maxLength={80} defaultValue={series?.groupName ?? ''} /></label>
+  </div>
+}
+
 function ActualPicker({ props, row }: { props: Props; row: Occurrence }) {
   const [search, setSearch] = useState('')
   const query = new URLSearchParams({ id: row.seriesId, scheduledOn: row.scheduledOn, search })
@@ -113,7 +127,7 @@ function ActualPicker({ props, row }: { props: Props; row: Occurrence }) {
   </>
 }
 
-function OccurrenceDialog({ action, props, close, write }: {
+export function OccurrenceDialog({ action, props, close, write }: {
   action: Extract<Action, { row: Occurrence }>; props: Props; close: () => void; write: (resource: string, record: object) => Promise<void>
 }) {
   const { row, kind } = action
@@ -139,10 +153,11 @@ function MonthlyTotals({ rows }: { rows: Occurrence[] }) {
   let confirmedIncome = 0n
   for (const row of rows) {
     if (row.skipped) continue
+    const current = confirmedAmount(row)
     if (row.kind === 'income') {
       if (row.actualCents !== null) confirmedIncome += BigInt(row.actualCents)
       else plannedIncome += BigInt(row.plannedCents)
-    } else if (row.actualCents !== null) confirmed += BigInt(row.actualCents)
+    } else if (current !== null) confirmed += BigInt(current)
     else planned += BigInt(row.plannedCents)
   }
   return <dl className="financial-values cash-values">
@@ -201,15 +216,17 @@ export function RecurrencesView(props: Props) {
         <ul className="financial-rows">
           {rows.map((row) => <li key={`${row.seriesId}:${row.scheduledOn}`}>
             <div><strong>{row.name}</strong>
-              <small>{formatDate(row.on)} · {instrumentName(row, props.catalog)} · {row.entryId ? 'Confirmada' : row.skipped ? 'Pulada' : 'Prevista'}</small>
+              <small>{formatDate(row.on)} · {instrumentName(row, props.catalog)} · {row.entryId || row.confirmedCents !== null ? 'Confirmada' : row.skipped ? 'Pulada' : 'Prevista'}</small>
               {row.entryId && <small>{row.description} · previsão de {formatBrlCents(row.plannedCents)} para {formatDate(row.expectedOn)}</small>}
               {!row.entryId && row.expectedOn !== row.scheduledOn && <small>Data original {formatDate(row.scheduledOn)}</small>}
             </div>
-            <strong>{formatBrlCents(row.actualCents ?? row.plannedCents)}</strong>
+            <strong>{formatBrlCents(confirmedAmount(row) ?? row.plannedCents)}</strong>
             {!row.entryId && <div className="recurrence-actions">
               {row.skipped ? <button type="button" className="ledger-quiet" onClick={() => setAction({ kind: 'restore', row })}>Restaurar</button> : <>
-                <button type="button" className="ledger-quiet" onClick={() => setAction({ kind: 'adjust', row })}>Editar ocorrência</button>
-                <button type="button" className="ledger-quiet" onClick={() => setAction({ kind: 'skip', row })}>Pular</button>
+                {row.confirmedCents === null && <>
+                  <button type="button" className="ledger-quiet" onClick={() => setAction({ kind: 'adjust', row })}>Editar ocorrência</button>
+                  <button type="button" className="ledger-quiet" onClick={() => setAction({ kind: 'skip', row })}>Pular</button>
+                </>}
                 <button type="button" className="ledger-quiet" onClick={() => setAction({ kind: 'link', row })}>Conciliar</button>
               </>}
             </div>}

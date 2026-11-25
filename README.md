@@ -27,6 +27,8 @@ Em **Rateios e acertos**, selecione uma despesa existente, indique quem pagou e 
 
 Em **Assinaturas e recorrências**, cadastre a frequência e o meio de cobrança, abra a **Visão geral** ou filtre por cartão. Use a agenda mensal para ajustar uma ocorrência, pulá-la ou conciliá-la com o Extrato. A troca de cartão vale a partir da ocorrência escolhida e preserva o histórico. [Regras de recorrência](decisions/14-assinaturas-e-recorrencias.md)
 
+Em **Previsão de gastos**, acompanhe luz, água, internet e outras despesas recorrentes por mês. Ajuste uma estimativa individual, confirme o valor quando chegar a cobrança e vincule o lançamento do Extrato quando disponível. Você pode organizar as despesas em grupos opcionais. [Regras da previsão de gastos](decisions/15-previsao-gastos-recorrentes.md)
+
 ### Preparar o banco
 
 Com Docker Compose, defina `POSTGRES_PASSWORD` em `.env` e execute:
