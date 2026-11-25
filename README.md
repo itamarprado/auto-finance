@@ -19,7 +19,7 @@ Abra o espaço financeiro, cadastre um titular e vincule uma conta ou um cartão
 
 O saldo consolidado considera as contas selecionadas para esse total e os movimentos de conta desde a abertura até a data atual em Brasília. Compras no cartão aparecem no período da compra, em um total próprio.
 
-Em **Faturas**, selecione o mês de fechamento e um cartão para conferir compras, parcelas, pagamentos e estornos. Use **Nova compra parcelada** para dividir um valor entre ciclos. Em **Fluxo de caixa**, consulte movimentações efetivadas por conta e período e registre transferências entre contas. [Regras de faturas e caixa](decisions/10-faturas-e-caixa.md)
+Em **Faturas**, filtre o período, abra o grupo de um cartão e selecione a fatura para conferir compras, parcelas, pagamentos e estornos na tela de detalhe. Use **Nova compra parcelada** para dividir um valor entre ciclos. Em **Fluxo de caixa**, consulte movimentações efetivadas por conta e período e registre transferências entre contas. [Regras de faturas e caixa](decisions/10-faturas-e-caixa.md) · [Navegação de faturas](decisions/11-navegacao-de-faturas.md)
 
 ### Preparar o banco
 

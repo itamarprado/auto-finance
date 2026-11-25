@@ -20,6 +20,8 @@ jobs:
         responseCode: 401
       - url: http://127.0.0.1:3107/api/workspaces/00000000-0000-4000-8000-000000000000/ledger/invoices?cycleMonth=2024-02-01
         responseCode: 401
+      - url: http://127.0.0.1:3107/api/workspaces/00000000-0000-4000-8000-000000000000/ledger/invoice-cycles?from=2024-01-01&to=2024-12-01
+        responseCode: 401
       - url: http://127.0.0.1:3107/api/workspaces/00000000-0000-4000-8000-000000000000/ledger/cash?from=2024-02-01&to=2024-02-29
         responseCode: 401
   - type: passiveScan-wait

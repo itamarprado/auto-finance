@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { dateInBrasilia, currentMonthBounds } from '../domain/date.ts'
 import { formatBrlCents, parseBrlCents } from '../domain/money.ts'
 import type { CashStatement } from '../server/database/cash.ts'
-import type { InvoiceCharge, InvoiceKey, Invoices } from '../server/database/invoices.ts'
+import type { InvoiceCharge, InvoiceKey, InvoiceSummary, Invoices } from '../server/database/invoices.ts'
 import type { LedgerCatalog } from '../server/database/ledger.ts'
 import { field, RecordDialog } from './ledger-form.tsx'
 import { formatDate, LedgerError, ledgerRequest } from './ledger-http.ts'
+import { defaultInvoiceRoute, relativeMonth } from './invoice-navigation.ts'
+import type { InvoiceRoute } from './invoice-navigation.ts'
 
 interface ViewProps {
   url: string
@@ -140,45 +142,126 @@ function FinancialDialog({ action, props, dismiss }: { action: Action; props: Vi
   </RecordDialog>
 }
 
-export function InvoicesView(props: ViewProps) {
-  const [month, setMonth] = useState(() => dateInBrasilia().slice(0, 7))
-  const [cardId, setCardId] = useState('')
+interface InvoiceViewProps extends ViewProps {
+  route: InvoiceRoute
+  navigate: (route: InvoiceRoute, mode?: 'push' | 'replace', fromList?: boolean) => void
+}
+
+const monthLabel = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+const periodLabel = (cycleMonth: string) => monthLabel.format(new Date(`${cycleMonth}T00:00:00Z`))
+
+function invoiceStatus(row: InvoiceSummary) {
+  if (row.creditCents !== '0') return 'Crédito no ciclo'
+  if (row.openCents === '0') return row.paidCents !== '0' ? 'Quitada' : 'Sem saldo em aberto'
+  return row.closed ? 'Ciclo fechado' : 'Ciclo aberto'
+}
+
+function InvoiceList(props: InvoiceViewProps) {
+  const { route, catalog, navigate } = props
   const [action, setAction] = useState<Action | null>(null)
-  const invoice = { cycleMonth: `${month}-01`, cardId }
-  const query = new URLSearchParams({ cycleMonth: invoice.cycleMonth })
-  if (cardId) query.set('cardId', cardId)
-  const { data, feedback } = useReport<Invoices>(`${props.url}/invoices?${query}`, props.revision, props.expireSession)
-  const active = data?.summaries.find((row) => row.cardId === cardId)
+  const query = new URLSearchParams({ from: `${route.from}-01`, to: `${route.to}-01` })
+  const { data, feedback } = useReport<InvoiceSummary[]>(`${props.url}/invoice-cycles?${query}`, props.revision, props.expireSession)
+  const group = route.group ?? data?.[0]?.cardId ?? catalog.cards[0]?.id
+  const restored = useRef(false)
+  useEffect(() => {
+    if (!data || restored.current) return
+    restored.current = true
+    const scroll = window.history.state?.invoiceScroll
+    if (typeof scroll === 'number') window.scrollTo(0, scroll)
+  }, [data])
+
+  const cycles = new Map<string, InvoiceSummary[]>()
+  for (const cycle of data ?? []) {
+    const group = cycles.get(cycle.cardId)
+    if (group) group.push(cycle)
+    else cycles.set(cycle.cardId, [cycle])
+  }
+
+  function apply(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    navigate({ ...route, from: field(form, 'from'), to: field(form, 'to') }, 'replace')
+  }
+
+  function open(cycle: InvoiceSummary) {
+    window.history.replaceState({ ...window.history.state, invoiceScroll: window.scrollY }, '')
+    navigate({ ...route, group: cycle.cardId, detail: { cardId: cycle.cardId, month: cycle.cycleMonth.slice(0, 7) } }, 'push', true)
+    window.scrollTo(0, 0)
+  }
 
   return <>
-    <div className="ledger-surface financial-controls">
-      <label>Mês de fechamento<input type="month" required value={month}
-        onChange={(event) => { if (event.target.value) setMonth(event.target.value) }} /></label>
-      <button type="button" className="ledger-primary" disabled={!props.catalog.cards.length}
-        onClick={() => setAction({ kind: 'installments', cardId })}>{actionTitles.installments}</button>
-    </div>
+    <form key={`${route.from}:${route.to}`} className="ledger-surface financial-controls invoice-period" onSubmit={apply}>
+      <label>Do mês<input name="from" type="month" required defaultValue={route.from} /></label>
+      <label>Até o mês<input name="to" type="month" required defaultValue={route.to} /></label>
+      <button type="submit" className="ledger-quiet">Filtrar faturas</button>
+      <button type="button" className="ledger-quiet" onClick={() => navigate({ ...defaultInvoiceRoute(route.workspaceId), group: route.group }, 'replace')}>Últimos 12 meses</button>
+      <button type="button" className="ledger-quiet" onClick={() => navigate({ ...route, from: relativeMonth(1), to: relativeMonth(12) }, 'replace')}>Próximos 12 meses</button>
+      <button type="button" className="ledger-primary" disabled={!catalog.cards.length}
+        onClick={() => setAction({ kind: 'installments', cardId: group ?? '' })}>{actionTitles.installments}</button>
+    </form>
     {feedback}
-    {data && (data.summaries.length ? <ul className="ledger-catalog invoice-list" aria-label="Faturas por cartão">
-      {data.summaries.map((row) => <li key={row.cardId}>
-        <button type="button" className="ledger-quiet invoice-select" aria-pressed={cardId === row.cardId}
-          onClick={() => setCardId(row.cardId === cardId ? '' : row.cardId)}>{row.cardName}</button>
-        <span>{row.holderName} · {row.closed ? 'Ciclo fechado' : 'Ciclo aberto'}</span>
-        <span>Fecha {formatDate(row.closingOn)} · Vence {formatDate(row.dueOn)}</span>
-        <dl className="financial-values">
-          <DetailsAmount label="Compras e parcelas" amount={row.chargeCents} />
-          <DetailsAmount label="Estornos" amount={row.refundCents} />
-          <DetailsAmount label="Pago" amount={row.paidCents} />
-          <DetailsAmount label="Em aberto" amount={row.openCents} />
-          {row.creditCents !== '0' && <DetailsAmount label="Crédito no ciclo" amount={row.creditCents} />}
-        </dl>
-      </li>)}
-    </ul> : <p className="ledger-surface ledger-empty">Cadastre um cartão para acompanhar suas faturas.</p>)}
+    {data && (catalog.cards.length ? <div className="invoice-groups" aria-label="Faturas por cartão">
+      {catalog.cards.map((card) => {
+        const rows = cycles.get(card.id) ?? []
+        const expanded = group === card.id
+        const panelId = `cycles-${card.id}`
+        return <section className="ledger-surface invoice-group" key={card.id} aria-label={card.name}>
+          <h2><button type="button" className="invoice-group-toggle" aria-expanded={expanded} aria-controls={panelId}
+            onClick={() => navigate({ ...route, group: expanded ? '' : card.id }, 'replace')}>
+            <span>{card.name}{card.lastFour && ` · •••• ${card.lastFour}`}
+              <small>{catalog.holders.find((holder) => holder.id === card.holderId)?.name}</small></span>
+            <span className="invoice-count">{rows.length} {rows.length === 1 ? 'fatura' : 'faturas'}</span>
+          </button></h2>
+          <div id={panelId} hidden={!expanded}>
+            {rows.length ? <ul className="invoice-cycle-list">
+              {rows.map((cycle) => <li key={cycle.cycleMonth}>
+                <button type="button" className="invoice-cycle-button" onClick={() => open(cycle)}>
+                  <span><strong>{periodLabel(cycle.cycleMonth)}</strong><small>Vence em {formatDate(cycle.dueOn)}</small></span>
+                  <span>{invoiceStatus(cycle)}</span>
+                  <span><strong>{formatBrlCents(cycle.creditCents !== '0' ? cycle.creditCents : cycle.openCents !== '0' ? cycle.openCents : cycle.paidCents)}</strong>
+                    <small>{cycle.creditCents !== '0' ? 'A favor' : cycle.openCents !== '0' ? 'Em aberto' : 'Pago'}</small></span>
+                </button>
+              </li>)}
+            </ul> : <p className="ledger-empty">Nenhuma fatura no período.</p>}
+          </div>
+        </section>
+      })}
+    </div> : <p className="ledger-surface ledger-empty">Cadastre um cartão para acompanhar suas faturas.</p>)}
+    {action && <FinancialDialog action={action} props={props} dismiss={() => setAction(null)} />}
+  </>
+}
+
+function InvoicePage(props: InvoiceViewProps & { detail: NonNullable<InvoiceRoute['detail']> }) {
+  const [action, setAction] = useState<Action | null>(null)
+  const { cardId, month } = props.detail
+  const invoice = { cycleMonth: `${month}-01`, cardId }
+  const query = new URLSearchParams({ ...invoice })
+  const { data, feedback } = useReport<Invoices>(`${props.url}/invoices?${query}`, props.revision, props.expireSession)
+  const active = data?.summaries.find((row) => row.cardId === cardId)
+  function back() {
+    if (window.history.state?.invoiceFromList) window.history.back()
+    else props.navigate({ ...props.route, group: cardId, detail: undefined }, 'replace')
+  }
+  return <>
+    <button type="button" className="ledger-quiet invoice-back" onClick={back}>Voltar para faturas</button>
+    {feedback}
     {active && data?.detail && <section className="ledger-surface financial-detail" aria-label="Detalhes da fatura">
       <div className="ledger-section-heading">
-        <h2>{active.cardName}</h2>
+        <div className="invoice-identity">
+          <h2>{active.cardName} · {periodLabel(active.cycleMonth)}</h2>
+          <p>{active.holderName} · {invoiceStatus(active)}</p>
+          <p>Fecha em {formatDate(active.closingOn)} · Vence em {formatDate(active.dueOn)}</p>
+        </div>
         <button className="ledger-primary" type="button" disabled={active.openCents === '0' || !props.catalog.accounts.length}
           onClick={() => setAction({ kind: 'payments', invoice, openCents: active.openCents })}>{actionTitles.payments}</button>
       </div>
+      <dl className="financial-values cash-values" aria-label="Resumo da fatura">
+        <DetailsAmount label="Compras e parcelas" amount={active.chargeCents} />
+        <DetailsAmount label="Estornos" amount={active.refundCents} />
+        <DetailsAmount label="Pago" amount={active.paidCents} />
+        <DetailsAmount label="Em aberto" amount={active.openCents} />
+        {active.creditCents !== '0' && <DetailsAmount label="Crédito no ciclo" amount={active.creditCents} />}
+      </dl>
       <ul className="financial-rows">
         {data.detail.charges.map((charge) => <li key={`${charge.source}:${charge.id}`}>
           <div><strong>{charge.description}</strong>
@@ -202,6 +285,11 @@ export function InvoicesView(props: ViewProps) {
     </section>}
     {action && <FinancialDialog action={action} props={props} dismiss={() => setAction(null)} />}
   </>
+}
+
+export function InvoicesView(props: InvoiceViewProps) {
+  const { detail } = props.route
+  return detail ? <InvoicePage key={`${detail.cardId}:${detail.month}`} {...props} detail={detail} /> : <InvoiceList {...props} />
 }
 
 export function CashView(props: ViewProps) {

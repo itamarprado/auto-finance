@@ -6,6 +6,8 @@ import type { LedgerCatalog, Statement } from '../server/database/ledger.ts'
 import { LedgerForm, entryLabels, formLabels, sectionLabels } from './ledger-form.tsx'
 import type { LedgerSection } from './ledger-form.tsx'
 import { CashView, InvoicesView } from './financial-view.tsx'
+import { defaultInvoiceRoute, readInvoiceRoute, writeInvoiceRoute } from './invoice-navigation.ts'
+import type { InvoiceRoute } from './invoice-navigation.ts'
 import { formatDate, LedgerError, ledgerRequest } from './ledger-http.ts'
 
 interface Filters {
@@ -172,7 +174,10 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
   sessionError: string
   busy: boolean
 }) {
-  const [section, setSection] = useState<Screen>('entries')
+  const [baseSection, setBaseSection] = useState<Exclude<Screen, 'invoices'>>('entries')
+  const [route, setRoute] = useState(readInvoiceRoute)
+  const invoiceRoute = route?.workspaceId === workspace.id ? route : null
+  const section: Screen = invoiceRoute ? 'invoices' : baseSection
   const [form, setForm] = useState<LedgerSection | null>(null)
   const [filters, setFilters] = useState(initialFilters)
   const [data, setData] = useState<{ catalog: LedgerCatalog; statement: Statement } | null>(null)
@@ -182,6 +187,33 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
   const [revision, setRevision] = useState(0)
   const url = `/api/workspaces/${encodeURIComponent(workspace.id)}/ledger`
   const query = statementQuery(filters)
+
+  useEffect(() => {
+    function restore() {
+      setRoute(readInvoiceRoute())
+      setNotice('')
+      setForm(null)
+    }
+    window.addEventListener('popstate', restore)
+    return () => window.removeEventListener('popstate', restore)
+  }, [])
+
+  function navigateInvoice(next: InvoiceRoute | null, mode: 'push' | 'replace' = 'push', fromList = false) {
+    writeInvoiceRoute(next, mode, fromList)
+    setRoute(next)
+    setNotice('')
+  }
+
+  function setSection(next: Screen) {
+    setNotice('')
+    if (next === 'invoices') {
+      if (!invoiceRoute) navigateInvoice(defaultInvoiceRoute(workspace.id))
+      else if (invoiceRoute.detail) navigateInvoice({ ...invoiceRoute, detail: undefined })
+    } else {
+      if (invoiceRoute) navigateInvoice(null)
+      setBaseSection(next)
+    }
+  }
 
   useEffect(() => {
     const controller = new AbortController()
@@ -250,7 +282,7 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
         <nav aria-label="Área financeira">
           {sections.map((item) => (
             <button key={item} type="button" aria-current={section === item ? 'page' : undefined}
-              onClick={() => { setSection(item); setNotice('') }}>
+              onClick={() => setSection(item)}>
               <span className="finance-symbol" aria-hidden="true">{symbols[item]}</span>{screenLabels[item]}
             </button>
           ))}
@@ -263,7 +295,7 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
       </aside>
       <main className="finance-main">
         <header className="finance-header">
-          <div><p>Espaço ativo: <strong>{workspace.name}</strong></p><h1>{screenLabels[section]}</h1></div>
+          <div><p>Espaço ativo: <strong>{workspace.name}</strong></p><h1>{invoiceRoute?.detail ? 'Detalhe da fatura' : screenLabels[section]}</h1></div>
           {section !== 'invoices' && section !== 'cash' &&
             <button type="button" className="ledger-primary" onClick={openForm} disabled={!data || loading}>{formLabels[section]}</button>}
         </header>
@@ -271,7 +303,8 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
         {sessionError && <p className="notice" role="alert">{sessionError}</p>}
         {error && <div className="notice" role="alert">{error} <button className="ledger-quiet" type="button" onClick={() => setRevision((value) => value + 1)}>Tentar novamente</button></div>}
         {data && section === 'entries' && <StatementView catalog={data.catalog} statement={data.statement} filters={filters} apply={setFilters} loading={loading} />}
-        {data && section === 'invoices' && <InvoicesView url={url} catalog={data.catalog} revision={revision} saved={saved} expireSession={expireSession} />}
+        {data && invoiceRoute && <InvoicesView url={url} catalog={data.catalog} revision={revision} saved={saved} expireSession={expireSession}
+          route={invoiceRoute} navigate={navigateInvoice} />}
         {data && section === 'cash' && <CashView url={url} catalog={data.catalog} revision={revision} saved={saved} expireSession={expireSession} />}
         {data && section !== 'entries' && section !== 'invoices' && section !== 'cash' && <CatalogView section={section} catalog={data.catalog} />}
         {!data && loading && <p className="ledger-surface ledger-empty">Carregando o espaço financeiro…</p>}

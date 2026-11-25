@@ -3,7 +3,7 @@ import type { Pool } from 'pg'
 import type { sessionUser } from '../auth/sessions.ts'
 import { getCash } from '../database/cash.ts'
 import type { CashFilter } from '../database/cash.ts'
-import { addInstallment, addPayment, addRefund, addTransfer, FinancialInputError, getInvoices, reversePayment } from '../database/invoices.ts'
+import { addInstallment, addPayment, addRefund, addTransfer, FinancialInputError, getInvoices, listInvoiceCycles, reversePayment } from '../database/invoices.ts'
 import type { InstallmentInput, PaymentInput, RefundInput, ReversalInput, TransferInput } from '../database/invoices.ts'
 import { addAccount, addCard, addEntry, addHolder, getCatalog, getStatement } from '../database/ledger.ts'
 import type { AccountInput, CardInput, EntryFilter, EntryInput, HolderInput } from '../database/ledger.ts'
@@ -120,6 +120,21 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, pr
         if (error instanceof FinancialInputError) return reply.code(error.status).send({ message: error.message })
         throw error
       }
+    })
+
+    ledger.get<{ Params: WorkspaceParams; Querystring: { from: string; to: string } }>('/ledger/invoice-cycles', {
+      schema: { params: workspaceParamsSchema, querystring: {
+        type: 'object', required: ['from', 'to'], additionalProperties: false,
+        properties: { from: cycleMonth, to: cycleMonth },
+      } },
+    }, (request, reply) => {
+      const { from, to } = request.query
+      const monthIndex = (value: string) => Number(value.slice(0, 4)) * 12 + Number(value.slice(5, 7))
+      if (!validDate(from) || !validDate(to) || from > to) return invalidDate(reply)
+      if (monthIndex(to) - monthIndex(from) >= 60) {
+        return reply.code(422).send({ message: 'Escolha um período de até 60 meses.' })
+      }
+      return listInvoiceCycles(prisma, request.params.workspaceId, from, to)
     })
 
     ledger.get<{ Params: WorkspaceParams; Querystring: CashFilter }>('/ledger/cash', {
