@@ -7,6 +7,8 @@ import { addInstallment, addPayment, addRefund, addTransfer, FinancialInputError
 import type { InstallmentInput, PaymentInput, RefundInput, ReversalInput, TransferInput } from '../database/invoices.ts'
 import { addAccount, addCard, addEntry, addHolder, getCatalog, getStatement } from '../database/ledger.ts'
 import type { AccountInput, CardInput, EntryFilter, EntryInput, HolderInput } from '../database/ledger.ts'
+import { addSettlement, addSplit, listReceiptSources, listSplits, listSplitSources } from '../database/splits.ts'
+import type { SettlementInput, SplitInput } from '../database/splits.ts'
 import { findWorkspace } from '../database/workspaces.ts'
 import { Prisma } from '../generated/prisma/client.ts'
 import type { PrismaClient } from '../generated/prisma/client.ts'
@@ -33,7 +35,7 @@ const invoiceKey = { cardId: uuid, cycleMonth }
 const page = { type: 'integer', minimum: 1, maximum: 1_000_000 }
 const statementFilter = {
   type: 'object', additionalProperties: false, properties: {
-    from: date, to: date, accountId: uuid, cardId: uuid, kind: { ...entryKind, enum: [...entryKind.enum, 'refund'] },
+    from: date, to: date, accountId: uuid, cardId: uuid, kind: { ...entryKind, enum: [...entryKind.enum, 'refund', 'reimbursement_in', 'reimbursement_out'] },
     search: { type: 'string', maxLength: 160 }, category: { type: 'string', maxLength: 80 },
     tag: { type: 'string', maxLength: 40 }, page,
   },
@@ -108,6 +110,38 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, pr
 
     registerImportRoutes(ledger, prisma)
 
+    const listFields = { page, search: { type: 'string', maxLength: 160 } }
+    const paging = { type: 'object', additionalProperties: false, properties: listFields }
+    const people = { fromHolderId: uuid, toHolderId: uuid }
+    const origin = (types: string[]) => ({
+      type: 'object', additionalProperties: false, required: ['id', 'source'],
+      properties: { id: uuid, source: { type: 'string', enum: types } },
+    })
+    const items = (properties: Record<string, object>, required: string[], minItems: number) => ({
+      type: 'array', minItems, maxItems: 25,
+      items: { type: 'object', properties, required, additionalProperties: false },
+    })
+    ledger.get<{ Params: WorkspaceParams; Querystring: { page?: number } }>('/ledger/splits',
+      { schema: { params: workspaceParamsSchema, querystring: paging } },
+      ({ params, query }) => listSplits(prisma, params.workspaceId, query.page))
+    ledger.get<{ Params: WorkspaceParams; Querystring: { page?: number; search?: string } }>('/ledger/split-sources',
+      { schema: { params: workspaceParamsSchema, querystring: paging } },
+      ({ params, query }) => listSplitSources(prisma, params.workspaceId, query))
+    ledger.get<{ Params: WorkspaceParams; Querystring: Pick<SettlementInput, 'fromHolderId' | 'toHolderId'> & { page?: number; search?: string } }>(
+      '/ledger/settlement-sources', { schema: { params: workspaceParamsSchema, querystring: {
+        ...paging, required: Object.keys(people), properties: { ...listFields, ...people },
+      } } }, ({ params, query }) => listReceiptSources(prisma, params.workspaceId, query))
+    ledger.post<{ Params: WorkspaceParams; Body: SplitInput }>('/ledger/splits', bodySchema({
+      id: uuid, origin: origin(['entry', 'plan']), payerId: uuid, mode: { type: 'string', enum: ['equal', 'fixed'] },
+      shares: items({ holderId: uuid, amountCents }, ['holderId'], 2),
+    }, ['id', 'origin', 'payerId', 'mode', 'shares']), ({ params, body }, reply) =>
+      save(reply, body.id, () => addSplit(prisma, params.workspaceId, body)))
+    ledger.post<{ Params: WorkspaceParams; Body: SettlementInput }>('/ledger/settlements', bodySchema({
+      id: uuid, origin: origin(['entry', 'transfer']), ...people,
+      allocations: items({ splitId: uuid, holderId: uuid, amountCents }, ['splitId', 'holderId', 'amountCents'], 1),
+    }, ['id', 'origin', ...Object.keys(people), 'allocations']), ({ params, body }, reply) =>
+      save(reply, body.id, () => addSettlement(prisma, params.workspaceId, body)))
+
     ledger.get<{ Params: WorkspaceParams; Querystring: EntryFilter }>('/ledger/entries', {
       schema: { params: workspaceParamsSchema, querystring: statementFilter },
     }, async (request, reply) => {
@@ -145,7 +179,7 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, pr
         getStatement(database, workspaceId, { from, to }, { pageSize: 0, byCategory: true }),
         getCash(prisma, workspaceId, { from, to }),
       ])
-      return { from, to, statement, cash: { netCents: cash.netCents, paidCents: cash.paidCents } }
+      return { from, to, statement, cash: { netCents: cash.netCents, paidCents: cash.paidCents, reimbursementNetCents: cash.reimbursementNetCents } }
     })
 
     ledger.post<{ Params: WorkspaceParams; Body: { id: string; category: string; tags: string[] } }>('/ledger/classifications',

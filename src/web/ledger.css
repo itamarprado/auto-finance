@@ -360,6 +360,25 @@ body:has(.finance-shell) {
 .import-history { margin-top: 1rem; }
 .financial-rows label { display: grid; min-width: 0; gap: .3rem; font-size: .82rem; }
 .financial-rows select { min-width: 0; max-width: 100%; white-space: normal; }
+
+.split-card { border-top: 1px solid var(--fin-border); }
+.split-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: .45rem 1rem;
+  padding: .85rem 1.1rem .35rem;
+  overflow-wrap: anywhere;
+}
+.split-heading h3 { margin: 0; font-size: 1rem; }
+.split-heading small { color: var(--fin-muted); }
+.split-card > .financial-context { margin: 0; padding: 0 1.1rem .45rem; }
+.split-fields, .split-movement-picker { display: grid; gap: .55rem; min-inline-size: 0; }
+.split-fields { margin: 0; border: 1px solid var(--fin-border); border-radius: .4rem; }
+.split-fields legend { font-weight: 600; }
+.split-participant { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: start; }
+.split-participant > label { flex: 1 1 9rem; }
 .finance-download { display: inline-flex; align-items: center; text-decoration: none; }
 .ledger-text-action { display: block; padding: .2rem 0; border: 0; background: transparent; color: #155c70; font: inherit; font-size: .76rem; text-decoration: underline; cursor: pointer; }
 

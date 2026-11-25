@@ -1,0 +1,9 @@
+# Rateios e acertos
+
+O rateio referencia uma despesa em conta, uma compra à vista ou o plano inteiro de uma compra parcelada. A despesa mantém o valor e o vínculo com o caixa ou com a fatura. O titular do instrumento é sugerido como pagador. O operador pode escolher outro titular cadastrado e selecionar de 2 a 25 participantes, incluindo quem pagou quando essa pessoa também assume uma parte. Aceitam-se partes iguais ou valores fixos positivos somando o total em centavos. Em caso de empate na distribuição de um centavo, a ordem estável dos identificadores define quem recebe o resíduo.
+
+O acerto vincula uma entrada na conta de quem recebe, uma saída na conta de quem paga ou uma transferência entre as duas contas. É possível baixar parte de um saldo e distribuir um único movimento entre vários rateios da mesma dupla e direção. A tela oferece os rateios da página atual. A data do movimento deve ser igual ou posterior à despesa, e a soma aplicada precisa corresponder ao valor integral do movimento. Um movimento já vinculado fica indisponível para um novo acerto.
+
+Os acertos mantêm a variação de caixa e aparecem separados de receitas e despesas. Uma operação entre duas contas registradas produz uma saída e uma entrada no caixa consolidado. Na fatura, um estorno reduz proporcionalmente as partes pela mesma regra de centavos. Reembolsos anteriores permanecem no histórico, e um eventual excesso vira saldo a devolver. Registre a devolução como uma nova movimentação efetivada.
+
+A migração 0006 acrescenta rateios, partes, acertos e suas alocações. As chaves compostas vinculam todos os registros ao mesmo espaço financeiro. O servidor confirma os saldos dentro de uma transação com o mesmo bloqueio usado pelos estornos. O papel de execução da API pode ler e inserir os vínculos, preservando o histórico de acertos. Percentuais explícitos e correção de um vínculo confirmado ficam para uma evolução.

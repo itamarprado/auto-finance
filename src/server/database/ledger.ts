@@ -37,7 +37,7 @@ export interface EntryFilter {
   to?: string
   accountId?: string
   cardId?: string
-  kind?: EntryInput['kind'] | 'refund'
+  kind?: EntryInput['kind'] | 'refund' | 'reimbursement_in' | 'reimbursement_out'
   search?: string
   category?: string
   tag?: string
@@ -129,8 +129,12 @@ export async function getStatement(database: Pool, workspaceId: string, filter: 
   const page = filter.page ?? 1
   const { rows: [result] } = await database.query<Omit<Statement, 'page' | 'pageSize'>>(
     `WITH movements AS (
-       SELECT id, workspace_id, account_id, card_id, kind, description, amount_cents, occurred_on, created_at, 'entry' AS source, category, tags
-       FROM auto_finance.ledger_entries WHERE workspace_id = $1
+       SELECT e.id, e.workspace_id, e.account_id, e.card_id,
+              CASE WHEN s.id IS NULL THEN e.kind WHEN e.kind = 'income' THEN 'reimbursement_in' ELSE 'reimbursement_out' END AS kind,
+              e.description, e.amount_cents, e.occurred_on, e.created_at, 'entry' AS source, e.category, e.tags
+       FROM auto_finance.ledger_entries e
+       LEFT JOIN auto_finance.split_settlements s ON (s.workspace_id, s.entry_id) = (e.workspace_id, e.id)
+       WHERE e.workspace_id = $1
        UNION ALL
        SELECT id, workspace_id, NULL::uuid, card_id, 'purchase', description, total_cents, purchased_on, created_at, 'plan', NULL::text, '{}'::text[]
        FROM auto_finance.card_installment_plans WHERE workspace_id = $1
@@ -165,7 +169,7 @@ export async function getStatement(database: Pool, workspaceId: string, filter: 
               coalesce(sum(amount_cents) FILTER (WHERE kind = 'expense'), 0)::text AS "expenseCents",
               coalesce(sum(amount_cents) FILTER (WHERE kind = 'purchase'), 0)::text AS "purchaseCents",
               coalesce(sum(amount_cents) FILTER (WHERE kind = 'refund'), 0)::text AS "refundCents"
-       FROM filtered WHERE $12::boolean GROUP BY lower(category)
+       FROM filtered WHERE $12::boolean AND kind NOT IN ('reimbursement_in', 'reimbursement_out') GROUP BY lower(category)
      )
      SELECT count(*)::integer AS count,
             coalesce(sum(amount_cents) FILTER (WHERE kind = 'income'), 0)::text AS "incomeCents",

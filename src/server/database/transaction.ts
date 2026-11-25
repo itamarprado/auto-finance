@@ -1,4 +1,13 @@
 import type { Pool, PoolClient } from 'pg'
+import type { Prisma, PrismaClient } from '../generated/prisma/client.ts'
+
+export function withFinancialLock<T>(prisma: PrismaClient, workspaceId: string,
+  work: (transaction: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+  return prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${workspaceId.toLowerCase()}, 634028))`
+    return work(transaction)
+  }, { isolationLevel: 'ReadCommitted' })
+}
 
 export async function inTransaction<T>(
   pool: Pool,

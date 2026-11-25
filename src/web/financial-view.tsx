@@ -32,7 +32,7 @@ const actionTitles = {
 
 const movementLabels = {
   income: 'Receita', expense: 'Despesa', payment: 'Pagamento de fatura',
-  payment_reversal: 'Estorno de pagamento', transfer: 'Transferência', refund: 'Estorno de compra',
+  payment_reversal: 'Estorno de pagamento', transfer: 'Transferência', refund: 'Estorno de compra', reimbursement: 'Reembolso',
 }
 
 export function useReport<T>(url: string, revision: number, expireSession: () => void) {
@@ -322,6 +322,7 @@ export function CashView(props: ViewProps) {
         <DetailsAmount label="Despesas" amount={data.expenseCents} />
         <DetailsAmount label="Pagamentos de fatura líquidos" amount={data.paidCents} />
         <DetailsAmount label="Transferências líquidas" amount={data.transferNetCents} />
+        <DetailsAmount label="Reembolsos líquidos" amount={data.reimbursementNetCents} />
         <DetailsAmount label="Variação de caixa" amount={data.netCents} />
       </dl>
       <ul className="financial-rows">

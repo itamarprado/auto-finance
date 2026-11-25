@@ -23,6 +23,8 @@ Em **Faturas**, filtre o período, abra o grupo de um cartão e selecione a fatu
 
 Em **Importar CSV**, escolha a conta ou o cartão, baixe o modelo, gere a prévia e revise possíveis vínculos antes de confirmar. Use **Classificar** em uma linha do Extrato para editar categoria e tags. O **Fechamento mensal** reúne os totais do extrato e as saídas efetivas de caixa. O CSV pode ser baixado do fechamento ou do extrato filtrado. [Formato e regras de importação](decisions/12-importacao-e-fechamento.md)
 
+Em **Rateios e acertos**, selecione uma despesa existente, indique quem pagou e divida o total em partes iguais ou valores fixos. Registre o pagamento do acerto no Extrato ou como transferência no Fluxo de caixa. Depois, vincule a movimentação no rateio para acompanhar o saldo e o histórico. [Regras de rateio](decisions/13-rateios-e-acertos.md)
+
 ### Preparar o banco
 
 Com Docker Compose, defina `POSTGRES_PASSWORD` em `.env` e execute:

@@ -75,6 +75,10 @@ model Holder {
   name        String
   accounts    Account[]
   cards       Card[]
+  paidSplits  ExpenseSplit[]
+  splitShares SplitShare[]
+  sentSettlements SplitSettlement[] @relation("SettlementSender")
+  receivedSettlements SplitSettlement[] @relation("SettlementRecipient")
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([workspaceId, id])
@@ -99,6 +103,8 @@ model LedgerEntry {
   workspace            Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   financialAdjustments FinancialAdjustment[]
   importRows           ImportRow[]
+  expenseSplit         ExpenseSplit?
+  splitSettlement      SplitSettlement?
 
   @@id([workspaceId, id])
   @@index([workspaceId, occurredOn(sort: Desc), createdAt(sort: Desc), id(sort: Desc)], map: "ledger_entries_workspace_order_idx")
@@ -154,6 +160,8 @@ model Workspace {
   plans            CardInstallmentPlan[]
   adjustments      FinancialAdjustment[]
   importBatches    ImportBatch[]
+  expenseSplits    ExpenseSplit[]
+  splitSettlements SplitSettlement[]
 
   @@map("workspaces")
   @@schema("auto_finance")
@@ -172,6 +180,7 @@ model CardInstallmentPlan {
   workspace        Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   card             Card                  @relation(fields: [workspaceId, cardId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
   refunds          FinancialAdjustment[]
+  expenseSplit     ExpenseSplit?
 
   @@id([workspaceId, id])
   @@index([workspaceId, cardId, firstCycle], map: "card_installment_plans_card_idx")
@@ -202,6 +211,7 @@ model FinancialAdjustment {
   payment       FinancialAdjustment? @relation("PaymentReversal", fields: [workspaceId, paymentId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
   reversal      FinancialAdjustment? @relation("PaymentReversal")
   importRows    ImportRow[]
+  splitSettlement SplitSettlement?
 
   @@id([workspaceId, id])
   @@unique([workspaceId, paymentId])
@@ -227,6 +237,78 @@ model ImportBatch {
   @@id([workspaceId, id])
   @@index([workspaceId, createdAt(sort: Desc), id], map: "import_batches_workspace_date_idx")
   @@map("import_batches")
+  @@schema("auto_finance")
+}
+
+model ExpenseSplit {
+  workspaceId String @map("workspace_id") @db.Uuid
+  id          String @db.Uuid
+  entryId     String? @map("entry_id") @db.Uuid
+  planId      String? @map("plan_id") @db.Uuid
+  payerId     String @map("payer_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  entry       LedgerEntry? @relation(fields: [workspaceId, entryId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  plan        CardInstallmentPlan? @relation(fields: [workspaceId, planId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  payer       Holder @relation(fields: [workspaceId, payerId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  shares      SplitShare[]
+
+  @@id([workspaceId, id])
+  @@unique([workspaceId, entryId])
+  @@unique([workspaceId, planId])
+  @@index([workspaceId, createdAt(sort: Desc), id], map: "expense_splits_workspace_created_idx")
+  @@map("expense_splits")
+  @@schema("auto_finance")
+}
+
+model SplitShare {
+  workspaceId String @map("workspace_id") @db.Uuid
+  splitId     String @map("split_id") @db.Uuid
+  holderId    String @map("holder_id") @db.Uuid
+  amountCents BigInt @map("amount_cents")
+  split       ExpenseSplit @relation(fields: [workspaceId, splitId], references: [workspaceId, id], onDelete: Cascade, onUpdate: NoAction)
+  holder      Holder @relation(fields: [workspaceId, holderId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  allocations SplitSettlementAllocation[]
+
+  @@id([workspaceId, splitId, holderId])
+  @@map("split_shares")
+  @@schema("auto_finance")
+}
+
+model SplitSettlement {
+  workspaceId  String @map("workspace_id") @db.Uuid
+  id           String @db.Uuid
+  entryId      String? @map("entry_id") @db.Uuid
+  transferId   String? @map("transfer_id") @db.Uuid
+  fromHolderId String @map("from_holder_id") @db.Uuid
+  toHolderId   String @map("to_holder_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  entry        LedgerEntry? @relation(fields: [workspaceId, entryId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  transfer     FinancialAdjustment? @relation(fields: [workspaceId, transferId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  sender       Holder @relation("SettlementSender", fields: [workspaceId, fromHolderId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  recipient    Holder @relation("SettlementRecipient", fields: [workspaceId, toHolderId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  allocations  SplitSettlementAllocation[]
+
+  @@id([workspaceId, id])
+  @@unique([workspaceId, entryId])
+  @@unique([workspaceId, transferId])
+  @@map("split_settlements")
+  @@schema("auto_finance")
+}
+
+model SplitSettlementAllocation {
+  workspaceId  String @map("workspace_id") @db.Uuid
+  settlementId String @map("settlement_id") @db.Uuid
+  splitId      String @map("split_id") @db.Uuid
+  holderId     String @map("holder_id") @db.Uuid
+  amountCents  BigInt @map("amount_cents")
+  settlement   SplitSettlement @relation(fields: [workspaceId, settlementId], references: [workspaceId, id], onDelete: Cascade, onUpdate: NoAction)
+  share        SplitShare @relation(fields: [workspaceId, splitId, holderId], references: [workspaceId, splitId, holderId], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([workspaceId, settlementId, splitId, holderId])
+  @@index([workspaceId, splitId, holderId], map: "split_allocations_share_idx")
+  @@map("split_settlement_allocations")
   @@schema("auto_finance")
 }
 
