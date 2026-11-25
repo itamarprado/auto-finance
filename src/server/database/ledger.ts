@@ -37,7 +37,7 @@ export interface EntryFilter {
   to?: string
   accountId?: string
   cardId?: string
-  kind?: EntryInput['kind']
+  kind?: EntryInput['kind'] | 'refund'
   search?: string
   page?: number
 }
@@ -53,7 +53,9 @@ export interface LedgerCatalog {
 }
 
 export interface Statement {
-  entries: (Omit<EntryInput, 'instrumentId' | 'amountCents'> & {
+  entries: (Omit<EntryInput, 'instrumentId' | 'amountCents' | 'kind'> & {
+    kind: NonNullable<EntryFilter['kind']>
+    source: 'entry' | 'plan' | 'adjustment'
     amountCents: string
     instrumentName: string
     holderName: string
@@ -62,6 +64,7 @@ export interface Statement {
   incomeCents: string
   expenseCents: string
   purchaseCents: string
+  refundCents: string
   page: number
   pageSize: number
 }
@@ -83,8 +86,8 @@ export async function getCatalog(database: Pool, prisma: PrismaClient, workspace
          FROM auto_finance.accounts a
          CROSS JOIN (SELECT timezone('America/Sao_Paulo', CURRENT_TIMESTAMP)::date AS today) calendar
          LEFT JOIN LATERAL (
-           SELECT sum(CASE WHEN l.kind = 'income' THEN l.amount_cents ELSE -l.amount_cents END) AS net
-           FROM auto_finance.ledger_entries l
+           SELECT sum(l.signed_cents) AS net
+           FROM auto_finance.cash_movements l
            WHERE l.workspace_id = a.workspace_id AND l.account_id = a.id
              AND l.occurred_on BETWEEN a.opening_date AND calendar.today
          ) e ON true
@@ -113,10 +116,19 @@ const pageSize = 25
 export async function getStatement(database: Pool, workspaceId: string, filter: EntryFilter): Promise<Statement> {
   const page = filter.page ?? 1
   const { rows: [result] } = await database.query<Omit<Statement, 'page' | 'pageSize'>>(
-    `WITH filtered AS (
-       SELECT l.id, l.kind, l.description, l.amount_cents, l.occurred_on, l.created_at,
+    `WITH movements AS (
+       SELECT id, workspace_id, account_id, card_id, kind, description, amount_cents, occurred_on, created_at, 'entry' AS source
+       FROM auto_finance.ledger_entries WHERE workspace_id = $1
+       UNION ALL
+       SELECT id, workspace_id, NULL::uuid, card_id, 'purchase', description, total_cents, purchased_on, created_at, 'plan'
+       FROM auto_finance.card_installment_plans WHERE workspace_id = $1
+       UNION ALL
+       SELECT id, workspace_id, NULL::uuid, card_id, 'refund', description, amount_cents, occurred_on, NULL::timestamptz, 'adjustment'
+       FROM auto_finance.financial_adjustments WHERE workspace_id = $1 AND kind = 'refund'
+     ), filtered AS (
+       SELECT l.id, l.kind, l.description, l.amount_cents, l.occurred_on, l.created_at, l.source,
               COALESCE(a.name, c.name) AS instrument_name, h.name AS holder_name
-       FROM auto_finance.ledger_entries l
+       FROM movements l
        LEFT JOIN auto_finance.accounts a ON a.workspace_id = l.workspace_id AND a.id = l.account_id
        LEFT JOIN auto_finance.cards c ON c.workspace_id = l.workspace_id AND c.id = l.card_id
        JOIN auto_finance.holders h ON h.workspace_id = l.workspace_id AND h.id = COALESCE(a.holder_id, c.holder_id)
@@ -128,18 +140,19 @@ export async function getStatement(database: Pool, workspaceId: string, filter: 
          AND ($6::text IS NULL OR l.kind = $6)
          AND ($7::text IS NULL OR strpos(lower(l.description), lower($7)) > 0)
      ), page_entries AS (
-       SELECT id, kind, description, amount_cents::text AS "amountCents",
+       SELECT id, kind, description, source, amount_cents::text AS "amountCents",
               to_char(occurred_on, 'YYYY-MM-DD') AS "occurredOn",
               instrument_name AS "instrumentName", holder_name AS "holderName",
               occurred_on, created_at
-       FROM filtered ORDER BY occurred_on DESC, created_at DESC, id DESC LIMIT $8 OFFSET $9
+       FROM filtered ORDER BY occurred_on DESC, created_at DESC NULLS LAST, id DESC, source LIMIT $8 OFFSET $9
      )
      SELECT count(*)::integer AS count,
             coalesce(sum(amount_cents) FILTER (WHERE kind = 'income'), 0)::text AS "incomeCents",
             coalesce(sum(amount_cents) FILTER (WHERE kind = 'expense'), 0)::text AS "expenseCents",
             coalesce(sum(amount_cents) FILTER (WHERE kind = 'purchase'), 0)::text AS "purchaseCents",
+            coalesce(sum(amount_cents) FILTER (WHERE kind = 'refund'), 0)::text AS "refundCents",
             coalesce((SELECT jsonb_agg(to_jsonb(p) - 'occurred_on' - 'created_at'
-                ORDER BY p.occurred_on DESC, p.created_at DESC, p.id DESC) FROM page_entries p), '[]') AS entries
+                ORDER BY p.occurred_on DESC, p.created_at DESC NULLS LAST, p.id DESC, p.source) FROM page_entries p), '[]') AS entries
      FROM filtered`,
     [workspaceId, filter.from ?? null, filter.to ?? null, filter.accountId ?? null,
       filter.cardId ?? null, filter.kind ?? null, filter.search ?? null, pageSize, (page - 1) * pageSize],

@@ -1,6 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Pool } from 'pg'
 import type { sessionUser } from '../auth/sessions.ts'
+import { getCash } from '../database/cash.ts'
+import type { CashFilter } from '../database/cash.ts'
+import { addInstallment, addPayment, addRefund, addTransfer, FinancialInputError, getInvoices, reversePayment } from '../database/invoices.ts'
+import type { InstallmentInput, PaymentInput, RefundInput, ReversalInput, TransferInput } from '../database/invoices.ts'
 import { addAccount, addCard, addEntry, addHolder, getCatalog, getStatement } from '../database/ledger.ts'
 import type { AccountInput, CardInput, EntryFilter, EntryInput, HolderInput } from '../database/ledger.ts'
 import { findWorkspace } from '../database/workspaces.ts'
@@ -19,6 +23,12 @@ const name = { type: 'string', minLength: 1, maxLength: 120 }
 const money = { type: 'integer', maximum: Number.MAX_SAFE_INTEGER }
 const day = { type: 'integer', minimum: 1, maximum: 31 }
 const entryKind = { type: 'string', enum: ['income', 'expense', 'purchase'] }
+const cycleMonth = { type: 'string', pattern: '^[0-9]{4}-[0-9]{2}-01$' }
+const description = { type: 'string', minLength: 1, maxLength: 160 }
+const amountCents = { ...money, minimum: 1 }
+const financialAmount = { id: uuid, amountCents, occurredOn: date }
+const invoiceKey = { cardId: uuid, cycleMonth }
+const page = { type: 'integer', minimum: 1, maximum: 1_000_000 }
 
 export const workspaceParamsSchema = {
   type: 'object',
@@ -51,6 +61,7 @@ async function save(reply: FastifyReply, id: string, write: () => Promise<boolea
     if (await write()) return reply.code(201).send({ id })
     return reply.code(409).send({ message: 'O registro já foi recebido. Confira a lista antes de enviar novamente.' })
   } catch (error) {
+    if (error instanceof FinancialInputError) return reply.code(error.status).send({ message: error.message })
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === 'P2003') return reply.code(422).send({ message: 'Selecione um vínculo deste espaço financeiro.' })
       const adapterError = error.meta?.driverAdapterError as { cause?: { originalCode?: string } } | undefined
@@ -84,9 +95,9 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, pr
           type: 'object',
           additionalProperties: false,
           properties: {
-            from: date, to: date, accountId: uuid, cardId: uuid, kind: entryKind,
+            from: date, to: date, accountId: uuid, cardId: uuid, kind: { ...entryKind, enum: [...entryKind.enum, 'refund'] },
             search: { type: 'string', maxLength: 160 },
-            page: { type: 'integer', minimum: 1, maximum: 1_000_000 },
+            page,
           },
         },
       },
@@ -96,6 +107,61 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, pr
         || (filter.from && filter.to && filter.from > filter.to)) return invalidDate(reply)
       return getStatement(database, request.params.workspaceId, filter)
     })
+
+    ledger.get<{ Params: WorkspaceParams; Querystring: { cycleMonth: string; cardId?: string } }>('/ledger/invoices', {
+      schema: { params: workspaceParamsSchema, querystring: {
+        type: 'object', required: ['cycleMonth'], additionalProperties: false, properties: invoiceKey,
+      } },
+    }, async (request, reply) => {
+      if (!validDate(request.query.cycleMonth)) return invalidDate(reply)
+      try {
+        return await getInvoices(prisma, request.params.workspaceId, request.query.cycleMonth, request.query.cardId?.toLowerCase())
+      } catch (error) {
+        if (error instanceof FinancialInputError) return reply.code(error.status).send({ message: error.message })
+        throw error
+      }
+    })
+
+    ledger.get<{ Params: WorkspaceParams; Querystring: CashFilter }>('/ledger/cash', {
+      schema: { params: workspaceParamsSchema, querystring: {
+        type: 'object', required: ['from', 'to'], additionalProperties: false,
+        properties: { from: date, to: date, accountId: uuid, page },
+      } },
+    }, (request, reply) => {
+      const { from, to } = request.query
+      if (!validDate(from) || !validDate(to) || from > to) return invalidDate(reply)
+      return getCash(prisma, request.params.workspaceId, request.query)
+    })
+
+    function registerAdjustment<T extends { id: string; occurredOn: string; cycleMonth?: string; firstCycle?: string }>(
+      resource: string, properties: Record<string, object>,
+      write: (client: PrismaClient, workspaceId: string, input: T) => Promise<boolean>,
+      optional: readonly string[] = [],
+    ) {
+      ledger.post<{ Params: WorkspaceParams; Body: T }>(`/ledger/${resource}`,
+        bodySchema(properties, Object.keys(properties).filter((key) => !optional.includes(key))),
+        (request, reply) => {
+          const { params } = request
+          const body = request.body as T
+          if (![body.occurredOn, body.cycleMonth, body.firstCycle].every((value) => value === undefined || validDate(value))) {
+            return invalidDate(reply)
+          }
+          return save(reply, body.id, () => write(prisma, params.workspaceId, body))
+        })
+    }
+
+    registerAdjustment<InstallmentInput>('installments', {
+      ...financialAmount, cardId: uuid, description, firstCycle: cycleMonth,
+      installmentCount: { type: 'integer', minimum: 2, maximum: 60 },
+    }, addInstallment, ['firstCycle'])
+    registerAdjustment<PaymentInput>('payments', { ...financialAmount, ...invoiceKey, accountId: uuid }, addPayment)
+    registerAdjustment<RefundInput>('refunds', {
+      ...financialAmount, ...invoiceKey, chargeId: uuid, source: { type: 'string', enum: ['purchase', 'installment'] },
+    }, addRefund)
+    registerAdjustment<ReversalInput>('payment-reversals', { id: uuid, occurredOn: date, paymentId: uuid }, reversePayment)
+    registerAdjustment<TransferInput>('transfers', {
+      ...financialAmount, accountId: uuid, destinationId: uuid, description,
+    }, addTransfer)
 
     ledger.post<{ Params: WorkspaceParams; Body: HolderInput }>('/ledger/holders',
       bodySchema({ id: uuid, name }, ['id', 'name']),
@@ -123,8 +189,7 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, pr
     ledger.post<{ Params: WorkspaceParams; Body: EntryInput }>('/ledger/entries',
       bodySchema({
         id: uuid, kind: entryKind, instrumentId: uuid,
-        description: { type: 'string', minLength: 1, maxLength: 160 },
-        amountCents: { ...money, minimum: 1 }, occurredOn: date,
+        description, amountCents, occurredOn: date,
       }, ['id', 'kind', 'instrumentId', 'description', 'amountCents', 'occurredOn']),
       async (request, reply) => {
         if (!validDate(request.body.occurredOn)) return invalidDate(reply)

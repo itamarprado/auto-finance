@@ -24,6 +24,8 @@ model Account {
   holder              Holder                @relation(fields: [workspaceId, holderId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
   cards               Card[]
   ledgerEntries       LedgerEntry[]
+  adjustments         FinancialAdjustment[] @relation("OriginAccount")
+  incomingAdjustments FinancialAdjustment[] @relation("DestinationAccount")
 
   @@id([workspaceId, id])
   @@map("accounts")
@@ -57,6 +59,8 @@ model Card {
   holder           Holder                @relation(fields: [workspaceId, holderId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
   paymentAccount   Account?              @relation(fields: [workspaceId, paymentAccountId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
   ledgerEntries    LedgerEntry[]
+  plans            CardInstallmentPlan[]
+  adjustments      FinancialAdjustment[]
 
   @@id([workspaceId, id])
   @@map("cards")
@@ -70,6 +74,7 @@ model Holder {
   accounts    Account[]
   cards       Card[]
   workspace   Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  refunds     FinancialAdjustment[]
 
   @@id([workspaceId, id])
   @@map("holders")
@@ -89,6 +94,7 @@ model LedgerEntry {
   account              Account?              @relation(fields: [workspaceId, accountId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
   card                 Card?                 @relation(fields: [workspaceId, cardId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
   workspace            Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  financialAdjustments FinancialAdjustment[]
 
   @@id([workspaceId, id])
   @@index([workspaceId, occurredOn(sort: Desc), createdAt(sort: Desc), id(sort: Desc)], map: "ledger_entries_workspace_order_idx")
@@ -141,7 +147,64 @@ model Workspace {
   holders          Holder[]
   ledgerEntries    LedgerEntry[]
   workspaceMembers WorkspaceMember[]
+  plans            CardInstallmentPlan[]
+  adjustments      FinancialAdjustment[]
 
   @@map("workspaces")
+  @@schema("auto_finance")
+}
+
+model CardInstallmentPlan {
+  workspaceId      String                @map("workspace_id") @db.Uuid
+  id               String                @db.Uuid
+  cardId           String                @map("card_id") @db.Uuid
+  description      String
+  totalCents       BigInt                @map("total_cents")
+  installmentCount Int                   @map("installment_count")
+  purchasedOn      DateTime              @map("purchased_on") @db.Date
+  firstCycle       DateTime              @map("first_cycle") @db.Date
+  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace        Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  card             Card                  @relation(fields: [workspaceId, cardId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  refunds          FinancialAdjustment[]
+
+  @@id([workspaceId, id])
+  @@index([workspaceId, cardId, firstCycle], map: "card_installment_plans_card_idx")
+  @@map("card_installment_plans")
+  @@schema("auto_finance")
+}
+
+model FinancialAdjustment {
+  workspaceId       String               @map("workspace_id") @db.Uuid
+  id                String               @db.Uuid
+  kind              String
+  amountCents       BigInt               @map("amount_cents")
+  occurredOn        DateTime             @map("occurred_on") @db.Date
+  description       String
+  cardId            String?              @map("card_id") @db.Uuid
+  cycleMonth        DateTime?            @map("cycle_month") @db.Date
+  accountId         String?              @map("account_id") @db.Uuid
+  destinationId     String?              @map("destination_id") @db.Uuid
+  purchaseId        String?              @map("purchase_id") @db.Uuid
+  planId            String?              @map("plan_id") @db.Uuid
+  paymentId         String?              @map("payment_id") @db.Uuid
+  workspace         Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  card              Card?                @relation(fields: [workspaceId, cardId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  account           Account?             @relation("OriginAccount", fields: [workspaceId, accountId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  destination       Account?             @relation("DestinationAccount", fields: [workspaceId, destinationId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  purchase          LedgerEntry?         @relation(fields: [workspaceId, purchaseId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  plan              CardInstallmentPlan? @relation(fields: [workspaceId, planId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  payment           FinancialAdjustment? @relation("PaymentReversal", fields: [workspaceId, paymentId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  reversal          FinancialAdjustment? @relation("PaymentReversal")
+  holder            Holder?              @relation(fields: [holderWorkspaceId, holderId], references: [workspaceId, id])
+  holderWorkspaceId String?              @db.Uuid
+  holderId          String?              @db.Uuid
+
+  @@id([workspaceId, id])
+  @@unique([workspaceId, paymentId])
+  @@index([workspaceId, cardId, cycleMonth], map: "financial_adjustments_card_cycle_idx")
+  @@index([workspaceId, accountId, occurredOn], map: "financial_adjustments_account_date_idx")
+  @@index([workspaceId, destinationId, occurredOn], map: "financial_adjustments_destination_date_idx")
+  @@map("financial_adjustments")
   @@schema("auto_finance")
 }

@@ -164,3 +164,71 @@ test('mantém filtros e navegação dentro do painel em desktop com fonte amplia
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   }
 })
+
+test('registra parcela, pagamento parcial, estorno e transferência entre as telas de faturas e caixa', async ({ page }) => {
+  await enterBrowserWorkspace(page, 'Espaço de faturas do navegador')
+  const origin = new URL(page.url()).origin
+  const session = await (await page.request.get('/api/auth/session')).json()
+  const ledger = `/api/workspaces/${session.workspaces[0].id}/ledger`
+  const holderId = randomUUID()
+  const accountId = randomUUID()
+  const destinationId = randomUUID()
+  async function seed(resource: string, data: object) {
+    const res = await page.request.post(`${ledger}/${resource}`, { headers: { Origin: origin }, data })
+    expect(res.status()).toBe(201)
+  }
+  await seed('holders', { id: holderId, name: 'Titular de faturas' })
+  for (const [id, name] of [[accountId, 'Conta pagadora de teste'], [destinationId, 'Reserva de teste']]) {
+    await seed('accounts', { id, name, holderId, kind: 'bank', openingDate: '2024-01-01',
+      openingBalanceCents: 10000, includeInBalance: true })
+  }
+  await seed('cards', { id: randomUUID(), name: 'Cartão de faturas', holderId, limitCents: 100000, closingDay: 25, dueDay: 8,
+    paymentAccountId: accountId })
+  await page.reload()
+  await page.getByRole('button', { name: /Espaço de faturas do navegador/ }).click()
+  const nav = page.getByRole('navigation', { name: 'Área financeira' })
+  const dialog = page.getByRole('dialog')
+  async function submit(amount: string, date: string) {
+    await dialog.getByLabel('Valor em reais', { exact: true }).fill(amount)
+    await dialog.getByLabel('Data da movimentação', { exact: true }).fill(date)
+    await dialog.getByRole('button', { name: 'Salvar', exact: true }).click()
+    await expect(dialog).toBeHidden()
+  }
+
+  await nav.getByRole('button', { name: 'Faturas', exact: true }).click()
+  await page.getByLabel('Mês de fechamento').fill('2024-02')
+  await page.getByRole('button', { name: 'Cartão de faturas', exact: true }).click()
+  await page.getByRole('button', { name: 'Nova compra parcelada', exact: true }).click()
+  await dialog.getByLabel('Descrição', { exact: true }).fill('Compra em três parcelas')
+  await dialog.getByLabel('Número de parcelas', { exact: true }).fill('3')
+  await submit('100,00', '2024-02-20')
+  const details = page.getByRole('region', { name: 'Detalhes da fatura' })
+  await expect(details).toContainText('Parcela 1/3')
+  await expect(details).toContainText('R$ 33,33')
+  await page.getByRole('button', { name: 'Registrar pagamento', exact: true }).click()
+  await submit('15,00', '2024-02-26')
+  await expect(details).toContainText('Pagamento de fatura')
+  const summary = page.getByRole('list', { name: 'Faturas por cartão' })
+  await expect(summary).toContainText('R$ 18,33')
+  await page.getByRole('button', { name: 'Estornar compra Compra em três parcelas', exact: true }).click()
+  await submit('5,00', '2024-02-27')
+  await expect(summary).toContainText('R$ 13,33')
+
+  await nav.getByRole('button', { name: 'Fluxo de caixa', exact: true }).click()
+  const cash = page.getByRole('region', { name: 'Movimentações de caixa' })
+  await page.getByLabel('De', { exact: true }).fill('2024-02-01')
+  await page.getByLabel('Até', { exact: true }).fill('2024-02-29')
+  await page.getByRole('button', { name: 'Filtrar caixa', exact: true }).click()
+  await expect(cash).toContainText('Pagamento de fatura')
+  await expect(cash).not.toContainText('Compra em três parcelas')
+  await page.getByRole('button', { name: 'Nova transferência', exact: true }).click()
+  await dialog.getByLabel('Descrição', { exact: true }).fill('Transferência de teste')
+  await dialog.getByRole('combobox', { name: 'Conta de origem', exact: true }).selectOption(accountId)
+  await dialog.getByRole('combobox', { name: 'Conta de destino', exact: true }).selectOption(destinationId)
+  await submit('20,00', '2024-02-28')
+  await expect(cash.getByText('Transferência de teste', { exact: true })).toHaveCount(2)
+  await expect(cash).toContainText('-R$ 15,00')
+
+  await page.setViewportSize({ width: 360, height: 780 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})

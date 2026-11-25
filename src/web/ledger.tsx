@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { dateInBrasilia } from '../domain/date.ts'
+import { currentMonthBounds } from '../domain/date.ts'
 import { formatBrlCents } from '../domain/money.ts'
 import type { LedgerCatalog, Statement } from '../server/database/ledger.ts'
 import { LedgerForm, entryLabels, formLabels, sectionLabels } from './ledger-form.tsx'
 import type { LedgerSection } from './ledger-form.tsx'
+import { CashView, InvoicesView } from './financial-view.tsx'
+import { formatDate, LedgerError, ledgerRequest } from './ledger-http.ts'
 
 interface Filters {
   from: string
@@ -15,31 +17,14 @@ interface Filters {
   page: number
 }
 
-const symbols = { entries: '≡', holders: '◉', accounts: '▤', cards: '▰' }
-const sections: LedgerSection[] = ['entries', 'holders', 'accounts', 'cards']
-
-class LedgerError extends Error {
-  constructor(message: string, readonly status: number) {
-    super(message)
-  }
-}
-
-async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, options)
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({})) as { message?: string }
-    throw new LedgerError(body.message ?? 'Não foi possível concluir a operação.', response.status)
-  }
-  return response.json() as Promise<T>
-}
+type Screen = LedgerSection | 'invoices' | 'cash'
+const screenLabels = { ...sectionLabels, invoices: 'Faturas', cash: 'Fluxo de caixa' }
+const symbols = { entries: '≡', holders: '◉', accounts: '▤', cards: '▰', invoices: '▤', cash: '↔' }
+const sections: Screen[] = ['entries', 'invoices', 'cash', 'holders', 'accounts', 'cards']
 
 function initialFilters(): Filters {
-  const monthStart = `${dateInBrasilia().slice(0, 7)}-01`
-  const monthEnd = new Date(`${monthStart}T00:00:00Z`)
-  monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1, 0)
   return {
-    from: monthStart,
-    to: monthEnd.toISOString().slice(0, 10),
+    ...currentMonthBounds(),
     origin: '', kind: '', search: '', page: 1,
   }
 }
@@ -54,10 +39,6 @@ function statementQuery(filters: Filters): string {
     query.set(kind === 'account' ? 'accountId' : 'cardId', id)
   }
   return query.toString()
-}
-
-function formatDate(date: string): string {
-  return date.split('-').reverse().join('/')
 }
 
 function StatementView({ catalog, statement, filters, apply, loading }: {
@@ -76,6 +57,7 @@ function StatementView({ catalog, statement, filters, apply, loading }: {
     { label: 'Despesas no filtro', value: statement.expenseCents, accent: 'expense' },
     { label: 'Compras no cartão no filtro', value: statement.purchaseCents, accent: 'purchase' },
   ]
+  if (statement.refundCents !== '0') stats.push({ label: 'Estornos no filtro', value: statement.refundCents, accent: 'income' })
   const pages = Math.max(1, Math.ceil(statement.count / statement.pageSize))
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -120,6 +102,7 @@ function StatementView({ catalog, statement, filters, apply, loading }: {
           <label>Tipo<select name="kind" defaultValue={filters.kind}>
             <option value="">Todos os tipos</option>
             <option value="income">Receita</option><option value="expense">Despesa</option><option value="purchase">Compra no cartão</option>
+            <option value="refund">Estorno no cartão</option>
           </select></label>
           <label>De<input name="from" type="date" defaultValue={filters.from} /></label>
           <label>Até<input name="to" type="date" defaultValue={filters.to} /></label>
@@ -130,13 +113,13 @@ function StatementView({ catalog, statement, filters, apply, loading }: {
             <table className="ledger-table" role="table">
               <thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader">Data</th><th scope="col" role="columnheader">Descrição</th><th scope="col" role="columnheader">Origem</th><th scope="col" role="columnheader">Tipo</th><th scope="col" role="columnheader">Valor</th></tr></thead>
               <tbody role="rowgroup">{statement.entries.map((entry) => (
-                <tr key={entry.id} role="row">
+                <tr key={`${entry.source}:${entry.id}`} role="row">
                   <td role="cell"><time dateTime={entry.occurredOn}>{formatDate(entry.occurredOn)}</time></td>
                   <td role="cell"><strong>{entry.description}</strong></td>
                   <td role="cell">{entry.instrumentName}<small>{entry.holderName}</small></td>
                   <td role="cell"><span className={`ledger-tag ledger-tag-${entry.kind}`}>{entryLabels[entry.kind]}</span></td>
-                  <td role="cell" className={`ledger-amount ${entry.kind === 'income' ? 'ledger-positive' : ''}`}>
-                    {formatBrlCents(BigInt(entry.amountCents) * (entry.kind === 'income' ? 1n : -1n))}
+                  <td role="cell" className={`ledger-amount ${entry.kind === 'income' || entry.kind === 'refund' ? 'ledger-positive' : ''}`}>
+                    {formatBrlCents(BigInt(entry.amountCents) * (entry.kind === 'income' || entry.kind === 'refund' ? 1n : -1n))}
                   </td>
                 </tr>
               ))}</tbody>
@@ -189,7 +172,7 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
   sessionError: string
   busy: boolean
 }) {
-  const [section, setSection] = useState<LedgerSection>('entries')
+  const [section, setSection] = useState<Screen>('entries')
   const [form, setForm] = useState<LedgerSection | null>(null)
   const [filters, setFilters] = useState(initialFilters)
   const [data, setData] = useState<{ catalog: LedgerCatalog; statement: Statement } | null>(null)
@@ -206,8 +189,8 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
     setLoading(true)
     setError('')
     Promise.all([
-      request<LedgerCatalog>(`${url}/catalog`, { signal }),
-      request<Statement>(`${url}/entries?${query}`, { signal }),
+      ledgerRequest<LedgerCatalog>(`${url}/catalog`, { signal }),
+      ledgerRequest<Statement>(`${url}/entries?${query}`, { signal }),
     ]).then(([catalog, statement]) => {
       if (!signal.aborted) setData({ catalog, statement })
     }).catch((cause: unknown) => {
@@ -225,7 +208,7 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
   }, [url, query, revision, expireSession])
 
   function openForm() {
-    if (!data) return
+    if (!data || section === 'invoices' || section === 'cash') return
     const { catalog } = data
     setNotice('')
     if ((section === 'accounts' || section === 'cards') && !catalog.holders.length) {
@@ -241,14 +224,18 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
     setForm(section)
   }
 
+  function saved() {
+    setNotice('Registro salvo.')
+    setRevision((previous) => previous + 1)
+  }
+
   async function save(record: object) {
     try {
-      await request(`${url}/${form}`, {
+      await ledgerRequest(`${url}/${form}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(record),
       })
       setForm(null)
-      setNotice('Registro salvo.')
-      setRevision((previous) => previous + 1)
+      saved()
     } catch (cause) {
       if (cause instanceof LedgerError && cause.status === 401) expireSession()
       if (cause instanceof LedgerError && cause.status === 409) setRevision((previous) => previous + 1)
@@ -264,7 +251,7 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
           {sections.map((item) => (
             <button key={item} type="button" aria-current={section === item ? 'page' : undefined}
               onClick={() => { setSection(item); setNotice('') }}>
-              <span className="finance-symbol" aria-hidden="true">{symbols[item]}</span>{sectionLabels[item]}
+              <span className="finance-symbol" aria-hidden="true">{symbols[item]}</span>{screenLabels[item]}
             </button>
           ))}
         </nav>
@@ -276,15 +263,17 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
       </aside>
       <main className="finance-main">
         <header className="finance-header">
-          <div><p>Espaço ativo: <strong>{workspace.name}</strong></p><h1>{sectionLabels[section]}</h1></div>
-          <button type="button" className="ledger-primary" onClick={openForm} disabled={!data || loading}>{formLabels[section]}</button>
+          <div><p>Espaço ativo: <strong>{workspace.name}</strong></p><h1>{screenLabels[section]}</h1></div>
+          {section !== 'invoices' && section !== 'cash' &&
+            <button type="button" className="ledger-primary" onClick={openForm} disabled={!data || loading}>{formLabels[section]}</button>}
         </header>
         {notice && <p className="finance-notice" aria-live="polite">{notice}</p>}
         {sessionError && <p className="notice" role="alert">{sessionError}</p>}
         {error && <div className="notice" role="alert">{error} <button className="ledger-quiet" type="button" onClick={() => setRevision((value) => value + 1)}>Tentar novamente</button></div>}
-        {data && (section === 'entries'
-          ? <StatementView catalog={data.catalog} statement={data.statement} filters={filters} apply={setFilters} loading={loading} />
-          : <CatalogView section={section} catalog={data.catalog} />)}
+        {data && section === 'entries' && <StatementView catalog={data.catalog} statement={data.statement} filters={filters} apply={setFilters} loading={loading} />}
+        {data && section === 'invoices' && <InvoicesView url={url} catalog={data.catalog} revision={revision} saved={saved} expireSession={expireSession} />}
+        {data && section === 'cash' && <CashView url={url} catalog={data.catalog} revision={revision} saved={saved} expireSession={expireSession} />}
+        {data && section !== 'entries' && section !== 'invoices' && section !== 'cash' && <CatalogView section={section} catalog={data.catalog} />}
         {!data && loading && <p className="ledger-surface ledger-empty">Carregando o espaço financeiro…</p>}
         {data && form && <LedgerForm section={form} catalog={data.catalog} dismiss={() => setForm(null)} save={save} />}
       </main>

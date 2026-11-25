@@ -17,7 +17,9 @@ A implementação atual inclui login local e um painel por espaço financeiro. O
 
 Abra o espaço financeiro, cadastre um titular e vincule uma conta ou um cartão. No **Extrato**, use **Novo lançamento** para registrar receitas, despesas ou compras. Os filtros aceitam descrição, origem, tipo e período.
 
-O saldo consolidado considera as contas selecionadas para esse total e os movimentos de conta desde a abertura até a data atual em Brasília. Compras no cartão aparecem no período da compra, em um total próprio. A conta pagadora e os dias de fechamento e vencimento ficam cadastrados para a etapa de faturas.
+O saldo consolidado considera as contas selecionadas para esse total e os movimentos de conta desde a abertura até a data atual em Brasília. Compras no cartão aparecem no período da compra, em um total próprio.
+
+Em **Faturas**, selecione o mês de fechamento e um cartão para conferir compras, parcelas, pagamentos e estornos. Use **Nova compra parcelada** para dividir um valor entre ciclos. Em **Fluxo de caixa**, consulte movimentações efetivadas por conta e período e registre transferências entre contas. [Regras de faturas e caixa](decisions/10-faturas-e-caixa.md)
 
 ### Preparar o banco
 

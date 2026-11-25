@@ -278,6 +278,53 @@ body:has(.finance-shell) {
 .ledger-dialog .ledger-checkbox input { width: 1rem; min-height: 1rem; }
 .ledger-dialog footer { display: flex; justify-content: flex-end; gap: .55rem; margin-top: .35rem; }
 
+.financial-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: .75rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.financial-controls label { display: grid; min-width: 0; gap: .3rem; color: var(--fin-muted); font-size: .82rem; font-weight: 600; }
+.financial-controls :is(input, select) {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  min-height: 2.55rem;
+  padding: .4rem .55rem;
+  border: 1px solid #c8d5dd;
+  border-radius: .45rem;
+  background: #fff;
+  color: var(--fin-ink);
+  font: inherit;
+}
+.financial-controls label:first-child { flex: 0 1 16rem; }
+.financial-controls .ledger-primary { margin-inline-start: auto; }
+.invoice-list { margin-bottom: 1rem; }
+.invoice-select { text-align: start; white-space: normal; overflow-wrap: anywhere; }
+.invoice-select[aria-pressed='true'] { background: #e5f3eb; border-color: #258676; color: #1a5b4b; }
+.financial-values { display: grid; gap: .38rem .9rem; margin: .45rem 0 0; }
+.financial-values div { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .2rem .75rem; }
+.financial-values dt { color: var(--fin-muted); font-size: .8rem; }
+.financial-values dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.financial-context { margin: 0; overflow-wrap: anywhere; }
+.cash-values { grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); padding: .45rem 1.1rem 1rem; }
+.cash-values div { display: grid; align-content: start; }
+.financial-rows { margin: 0; padding: 0; list-style: none; }
+.financial-rows li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem 1rem;
+  padding: .75rem 1.1rem;
+  border-top: 1px solid var(--fin-border);
+  overflow-wrap: anywhere;
+}
+.financial-rows li > div { flex: 1 1 15rem; min-width: 0; }
+.financial-rows small { display: block; color: var(--fin-muted); }
+
 @container (max-width: 49rem) {
   .ledger-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .ledger-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -286,6 +333,8 @@ body:has(.finance-shell) {
 
 @container (max-width: 34rem) {
   .ledger-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .financial-controls label:first-child { flex-basis: 100%; }
+  .financial-controls .ledger-primary { margin-inline-start: 0; }
   .ledger-table, .ledger-table tbody { display: block; min-width: 0; }
 
   .ledger-table thead {
