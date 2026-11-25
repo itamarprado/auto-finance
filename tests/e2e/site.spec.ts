@@ -138,6 +138,26 @@ test('cadastra titular, conta e cartão pela interface e filtra movimentações 
   await expect(page.getByRole('region', { name: 'Resumo financeiro' })).toContainText('R$ 20,50')
   await expect(page.getByRole('region', { name: 'Resumo financeiro' })).toContainText('R$ 690,10')
 
-  await page.setViewportSize({ width: 390, height: 844 })
+  await page.setViewportSize({ width: 360, height: 780 })
+  const amount = page.getByRole('row', { name: /Compra sintética/ }).getByRole('cell', { name: /20,50/ })
+  await expect(amount).toBeVisible()
+  const amountBox = await amount.boundingBox()
+  expect(amountBox!.x + amountBox!.width).toBeLessThanOrEqual(360)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})
+
+test('mantém filtros e navegação dentro do painel em desktop com fonte ampliada e em tela estreita', async ({ page }) => {
+  await enterBrowserWorkspace(page, 'Espaço para conferir o layout')
+  const filter = page.getByRole('button', { name: 'Filtrar', exact: true })
+  const region = page.getByRole('region', { name: 'Extrato por período' })
+  await expect(filter).toBeVisible()
+
+  for (const viewport of [{ width: 1920, height: 1080 }, { width: 1152, height: 720 }, { width: 360, height: 780 }]) {
+    await page.setViewportSize(viewport)
+    await page.evaluate(() => { document.documentElement.style.fontSize = '20px' })
+    const panel = (await region.boundingBox())!
+    const button = (await filter.boundingBox())!
+    expect(button.x + button.width).toBeLessThanOrEqual(panel.x + panel.width)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  }
 })

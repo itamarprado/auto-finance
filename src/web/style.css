@@ -16,6 +16,7 @@ body {
 .panel {
   box-sizing: border-box;
   width: min(100%, 34rem);
+  min-width: 0;
   padding: clamp(1.5rem, 6vw, 3rem);
   border: 1px solid #bbd0dc;
   border-top: .4rem solid #155c70;
@@ -62,6 +63,7 @@ h1 {
 
 .access form,
 .access label {
+  min-width: 0;
   display: grid;
   gap: .55rem;
 }
@@ -85,6 +87,7 @@ h1 {
 }
 
 .access input {
+  min-width: 0;
   width: 100%;
   padding: .55rem .75rem;
   background: #fff;
@@ -150,6 +153,7 @@ h1 {
 .access-heading h2,
 .access-heading p {
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .workspaces {
@@ -168,6 +172,7 @@ h1 {
   width: 100%;
   gap: .5rem;
   text-align: left;
+  overflow-wrap: anywhere;
 }
 
 .workspace span {
