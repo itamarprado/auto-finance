@@ -2,7 +2,7 @@
 
 Organizador de finanças pessoais com interface web e execução local. Cada instalação usa seu próprio banco de dados e, quando a integração bancária estiver disponível, as credenciais configuradas pelo operador da instalação.
 
-A implementação atual inclui React, Fastify, PostgreSQL, login local e acesso a espaços financeiros. Cadastro de contas e cartões, extrato, importação e sincronização bancária estão no [plano de desenvolvimento](decisions/08-plano-sdlc.md).
+A implementação atual inclui login local e um painel por espaço financeiro. O painel permite cadastrar titulares, contas e cartões, registrar receitas, despesas e compras manualmente e filtrar o extrato. As etapas seguintes estão no [plano de desenvolvimento](decisions/08-plano-sdlc.md).
 
 ## Uso local
 
@@ -12,6 +12,12 @@ A implementação atual inclui React, Fastify, PostgreSQL, login local e acesso 
 4. Em `.env`, aponte `DATABASE_URL` para o banco com o papel `auto_finance_api`. Em `.env.migrate`, aponte `DATABASE_MIGRATION_URL` para o mesmo banco com o papel `auto_finance_migrator`. No Compose, use o endereço `127.0.0.1:54329` e o formato `postgresql://USUARIO:SENHA@127.0.0.1:54329/auto_finance`. Codifique caracteres reservados da senha para URL.
 5. Rode `npm run db:migrate`. Crie a conta inicial com `npm run auth:create-user -- usuario "Nome de exibição" "Espaço pessoal"`. O terminal pede uma senha de 15 a 128 caracteres com entrada mascarada. Cada conta recebe um espaço próprio.
 6. Rode `npm run build` e `npm start`. Abra `http://127.0.0.1:3000` e entre com a conta local. A API escuta em loopback.
+
+### Primeiros lançamentos
+
+Abra o espaço financeiro, cadastre um titular e vincule uma conta ou um cartão. No **Extrato**, use **Novo lançamento** para registrar receitas, despesas ou compras. Os filtros aceitam descrição, origem, tipo e período.
+
+O saldo consolidado considera as contas selecionadas para esse total e os movimentos de conta desde a abertura até a data atual em Brasília. Compras no cartão aparecem no período da compra, em um total próprio. A conta pagadora e os dias de fechamento e vencimento ficam cadastrados para a etapa de faturas.
 
 ### Preparar o banco
 
@@ -48,7 +54,7 @@ Guarde credenciais em arquivos ignorados pelo Git ou no ambiente do processo loc
 - `npm run security:deps` consulta avisos públicos de dependências e falha diante de achados de gravidade alta ou crítica.
 - `semgrep scan --config .semgrep.yml --metrics=off --error src` aplica as regras do repositório com o Semgrep CE.
 - `gitleaks git --config .gitleaks.toml --redact=100 --log-opts=HEAD .` procura segredos no histórico alcançável pela revisão atual.
-- O plano [OWASP ZAP](security/zap-smoke.yaml) observa a página inicial, `/api/health` e a resposta sem sessão de `/api/auth/session` na porta local `3107`. Execute o build nessa porta com PostgreSQL descartável e indique um diretório para o relatório em `ZAP_REPORT_DIR`. No ZAP 2.17.0, use `zap.sh -cmd -silent -notel -autorun security/zap-smoke.yaml` ou o lançador correspondente no Windows.
+- O plano [OWASP ZAP](security/zap-smoke.yaml) observa a página inicial, a saúde da API e as respostas sem sessão de autenticação e do catálogo financeiro na porta local `3107`. Execute o build nessa porta com PostgreSQL descartável e indique um diretório para o relatório em `ZAP_REPORT_DIR`. No ZAP 2.17.0, use `zap.sh -cmd -silent -notel -autorun security/zap-smoke.yaml` ou o lançador correspondente no Windows.
 
 O [workflow](.github/workflows/ci.yml) verifica código e segredos antes do build. Usa PostgreSQL descartável em loopback e dados sintéticos. Em um remoto GitHub com Actions habilitado, os resultados aparecem em **Actions → Validação da base → Summary** e nos logs de cada job. Ao configurar proteção de merge, exija **Código e segredos** e **Testes e segurança**. [Plano de CI](decisions/06-testes-e-ci.md).
 

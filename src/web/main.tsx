@@ -2,6 +2,7 @@ import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Access } from './access.tsx'
 import './style.css'
+import './ledger.css'
 
 const messages = {
   loading: 'Verificando conexão com o banco de dados…',
@@ -38,15 +39,7 @@ function DatabaseStatus() {
 }
 
 function App() {
-  return (
-    <main className="panel">
-      <header className="panel-header">
-        <h1>Auto Finance</h1>
-        <DatabaseStatus />
-      </header>
-      <Access />
-    </main>
-  )
+  return <Access databaseStatus={<DatabaseStatus />} />
 }
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)

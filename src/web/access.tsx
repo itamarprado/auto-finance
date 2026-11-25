@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import type { FormEvent, ReactNode } from 'react'
+import { Ledger } from './ledger.tsx'
 
 interface Workspace {
   id: string
@@ -21,12 +22,18 @@ async function readSession(signal?: AbortSignal): Promise<Session | null> {
   return response.json() as Promise<Session>
 }
 
-export function Access() {
+export function Access({ databaseStatus }: { databaseStatus: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null)
+
+  const expireSession = useCallback(() => {
+    setSession(null)
+    setActiveWorkspace(null)
+    setError('Sua sessão terminou. Entre novamente.')
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -91,9 +98,7 @@ export function Access() {
     try {
       const response = await fetch(`/api/workspaces/${encodeURIComponent(workspace.id)}`)
       if (response.status === 401) {
-        setSession(null)
-        setActiveWorkspace(null)
-        setError('Sua sessão terminou. Entre novamente.')
+        expireSession()
         return
       }
       if (response.status === 404) {
@@ -111,9 +116,25 @@ export function Access() {
     }
   }
 
-  if (loading) return <p className="muted access">Verificando sessão…</p>
+  if (session && activeWorkspace) {
+    return <Ledger
+      workspace={activeWorkspace}
+      databaseStatus={databaseStatus}
+      chooseWorkspace={() => { setActiveWorkspace(null); setError('') }}
+      logout={() => { void logout() }}
+      expireSession={expireSession}
+      sessionError={error}
+      busy={busy}
+    />
+  }
 
   return (
+    <main className="panel">
+      <header className="panel-header">
+        <h1>Auto Finance</h1>
+        {databaseStatus}
+      </header>
+      {loading ? <p className="muted access">Verificando sessão…</p> : (
     <section className="access" aria-label={session ? 'Acesso ao espaço financeiro' : 'Acesso local'}>
       {error && <p className="notice" role="alert">{error}</p>}
       {session ? (
@@ -133,7 +154,6 @@ export function Access() {
                   <button
                     className="workspace"
                     type="button"
-                    aria-pressed={activeWorkspace?.id === workspace.id}
                     disabled={busy}
                     onClick={() => { void openWorkspace(workspace) }}
                   >
@@ -144,7 +164,6 @@ export function Access() {
               ))}
             </ul>
           ) : <p className="muted">Esta conta ainda não tem acesso a um espaço.</p>}
-          {activeWorkspace && <p className="selected">Espaço ativo: <strong>{activeWorkspace.name}</strong></p>}
         </>
       ) : (
         <>
@@ -164,5 +183,7 @@ export function Access() {
         </>
       )}
     </section>
+      )}
+    </main>
   )
 }
