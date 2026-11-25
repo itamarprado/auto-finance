@@ -10,6 +10,8 @@ import type { AccountInput, CardInput, EntryFilter, EntryInput, HolderInput } fr
 import { findWorkspace } from '../database/workspaces.ts'
 import { Prisma } from '../generated/prisma/client.ts'
 import type { PrismaClient } from '../generated/prisma/client.ts'
+import { classification, csvCell, privacyText } from './import-csv.ts'
+import { registerImportRoutes } from './import-routes.ts'
 
 interface WorkspaceParams {
   workspaceId: string
@@ -29,6 +31,13 @@ const amountCents = { ...money, minimum: 1 }
 const financialAmount = { id: uuid, amountCents, occurredOn: date }
 const invoiceKey = { cardId: uuid, cycleMonth }
 const page = { type: 'integer', minimum: 1, maximum: 1_000_000 }
+const statementFilter = {
+  type: 'object', additionalProperties: false, properties: {
+    from: date, to: date, accountId: uuid, cardId: uuid, kind: { ...entryKind, enum: [...entryKind.enum, 'refund'] },
+    search: { type: 'string', maxLength: 160 }, category: { type: 'string', maxLength: 80 },
+    tag: { type: 'string', maxLength: 40 }, page,
+  },
+}
 
 export const workspaceParamsSchema = {
   type: 'object',
@@ -54,6 +63,15 @@ function validDate(value: string): boolean {
 
 function invalidDate(reply: FastifyReply) {
   return reply.code(422).send({ message: 'Confira as datas informadas.' })
+}
+
+function validPeriod({ from, to }: Pick<EntryFilter, 'from' | 'to'>): boolean {
+  return (!from || validDate(from)) && (!to || validDate(to)) && (!from || !to || from <= to)
+}
+
+function decimalCents(value: string): string {
+  const amount = BigInt(value)
+  return `${amount / 100n},${(amount % 100n).toString().padStart(2, '0')}`
 }
 
 async function save(reply: FastifyReply, id: string, write: () => Promise<boolean>) {
@@ -88,25 +106,64 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, pr
       schema: { params: workspaceParamsSchema },
     }, (request) => getCatalog(database, prisma, request.params.workspaceId))
 
+    registerImportRoutes(ledger, prisma)
+
     ledger.get<{ Params: WorkspaceParams; Querystring: EntryFilter }>('/ledger/entries', {
-      schema: {
-        params: workspaceParamsSchema,
-        querystring: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            from: date, to: date, accountId: uuid, cardId: uuid, kind: { ...entryKind, enum: [...entryKind.enum, 'refund'] },
-            search: { type: 'string', maxLength: 160 },
-            page,
-          },
-        },
-      },
+      schema: { params: workspaceParamsSchema, querystring: statementFilter },
     }, async (request, reply) => {
       const filter = request.query
-      if ((filter.from && !validDate(filter.from)) || (filter.to && !validDate(filter.to))
-        || (filter.from && filter.to && filter.from > filter.to)) return invalidDate(reply)
+      if (!validPeriod(filter)) return invalidDate(reply)
       return getStatement(database, request.params.workspaceId, filter)
     })
+
+    ledger.get<{ Params: WorkspaceParams; Querystring: EntryFilter }>('/ledger/entries.csv', {
+      schema: { params: workspaceParamsSchema, querystring: statementFilter },
+    }, async (request, reply) => {
+      if (!validPeriod(request.query)) return invalidDate(reply)
+      const result = await getStatement(database, request.params.workspaceId, { ...request.query, page: 1 }, { pageSize: 5000 })
+      if (result.count > 5000) return reply.code(422).send({ message: 'Reduza o período para exportar até 5000 registros.' })
+      const rows = result.entries.map((entry) => [
+        entry.occurredOn, privacyText(entry.description), decimalCents(entry.amountCents), entry.kind,
+        privacyText(entry.instrumentName), privacyText(entry.holderName), privacyText(entry.category ?? ''), privacyText(entry.tags.join('|')),
+      ].map(csvCell).join(';'))
+      return reply.type('text/csv; charset=utf-8').header('Content-Disposition', 'attachment; filename="extrato-auto-finance.csv"')
+        .send(`\uFEFFdata;descricao;valor;tipo;origem;titular;categoria;tags\r\n${rows.join('\r\n')}\r\n`)
+    })
+
+    ledger.get<{ Params: WorkspaceParams; Querystring: { month: string } }>('/ledger/monthly', {
+      schema: { params: workspaceParamsSchema, querystring: {
+        type: 'object', required: ['month'], additionalProperties: false, properties: { month: cycleMonth },
+      } },
+    }, async (request, reply) => {
+      const from = request.query.month
+      if (!validDate(from)) return invalidDate(reply)
+      const end = new Date(`${from}T00:00:00Z`)
+      end.setUTCMonth(end.getUTCMonth() + 1, 0)
+      const to = end.toISOString().slice(0, 10)
+      const { workspaceId } = request.params
+      const [statement, cash] = await Promise.all([
+        getStatement(database, workspaceId, { from, to }, { pageSize: 0, byCategory: true }),
+        getCash(prisma, workspaceId, { from, to }),
+      ])
+      return { from, to, statement, cash: { netCents: cash.netCents, paidCents: cash.paidCents } }
+    })
+
+    ledger.post<{ Params: WorkspaceParams; Body: { id: string; category: string; tags: string[] } }>('/ledger/classifications',
+      bodySchema({ id: uuid, category: { type: 'string', maxLength: 80 }, tags: {
+        type: 'array', maxItems: 12, items: { type: 'string', maxLength: 40 },
+      } }, ['id', 'category', 'tags']), async (request, reply) => {
+        const { id, category, tags } = request.body
+        try {
+          const result = await prisma.ledgerEntry.updateMany({
+            where: { workspaceId: request.params.workspaceId, id }, data: classification(category, tags),
+          })
+          if (result.count === 0) return reply.code(404).send({ message: 'Lançamento não encontrado.' })
+          return { id }
+        } catch (error) {
+          if (error instanceof FinancialInputError) return reply.code(error.status).send({ message: error.message })
+          throw error
+        }
+      })
 
     ledger.get<{ Params: WorkspaceParams; Querystring: { cycleMonth: string; cardId?: string } }>('/ledger/invoices', {
       schema: { params: workspaceParamsSchema, querystring: {

@@ -35,7 +35,7 @@ const movementLabels = {
   payment_reversal: 'Estorno de pagamento', transfer: 'Transferência', refund: 'Estorno de compra',
 }
 
-function useReport<T>(url: string, revision: number, expireSession: () => void) {
+export function useReport<T>(url: string, revision: number, expireSession: () => void) {
   const [result, setResult] = useState<{ url: string; revision: number; data?: T; error?: string }>()
   const [retry, setRetry] = useState(0)
   useEffect(() => {

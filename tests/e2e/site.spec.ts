@@ -264,3 +264,55 @@ test('registra parcela, pagamento parcial, estorno e transferência entre as tel
   await page.setViewportSize({ width: 360, height: 780 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
+
+test('confirma um CSV, identifica a reaplicação e confere a classificação no fechamento mensal', async ({ page }) => {
+  await enterBrowserWorkspace(page, 'Espaço de importação do navegador')
+  const origin = new URL(page.url()).origin
+  const session = await (await page.request.get('/api/auth/session')).json()
+  const ledger = `/api/workspaces/${session.workspaces[0].id}/ledger`
+  const holderId = randomUUID()
+  const accountId = randomUUID()
+  const headers = { Origin: origin }
+  expect((await page.request.post(`${ledger}/holders`, { headers, data: { id: holderId, name: 'Titular do CSV' } })).status()).toBe(201)
+  expect((await page.request.post(`${ledger}/accounts`, { headers, data: { id: accountId, holderId,
+    name: 'Conta do extrato CSV', kind: 'bank', openingBalanceCents: 10000, openingDate: '2024-01-01', includeInBalance: true } })).status()).toBe(201)
+  await page.reload()
+  await page.getByRole('button', { name: /Espaço de importação do navegador/ }).click()
+  const nav = page.getByRole('navigation', { name: 'Área financeira' })
+  await nav.getByRole('button', { name: 'Importar CSV', exact: true }).click()
+  await page.getByRole('combobox', { name: 'Destino', exact: true }).selectOption(accountId)
+  const fixture = { name: 'transacoes-sinteticas.csv', mimeType: 'text/csv',
+    buffer: Buffer.from('data;descricao;valor;categoria;tags\n2024-04-02;Mercado do arquivo;-32,50;Casa;compras') }
+  await page.getByLabel('Arquivo CSV').setInputFiles(fixture)
+  await page.getByRole('button', { name: 'Gerar prévia' }).click()
+  const preview = page.getByRole('region', { name: 'Prévia da importação' })
+  await expect(preview).toContainText('Mercado do arquivo')
+  await page.getByRole('button', { name: 'Confirmar importação' }).click()
+  await expect(page.getByRole('region', { name: 'Histórico de lotes' })).toContainText('1 novo ·')
+  await page.getByLabel('Arquivo CSV').setInputFiles(fixture)
+  await page.getByRole('button', { name: 'Gerar prévia' }).click()
+  await expect(preview).toContainText('Este arquivo já foi importado')
+
+  await nav.getByRole('button', { name: 'Extrato', exact: true }).click()
+  await page.getByLabel('De', { exact: true }).fill('2024-04-01')
+  await page.getByLabel('Até', { exact: true }).fill('2024-04-30')
+  await page.getByRole('button', { name: 'Filtrar', exact: true }).click()
+  await page.getByRole('button', { name: 'Classificar Mercado do arquivo', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Classificar lançamento' })
+  await dialog.getByLabel('Categoria', { exact: true }).fill('Essenciais')
+  await dialog.getByRole('button', { name: 'Salvar' }).click()
+  await expect(page.getByRole('row', { name: /Mercado do arquivo/ })).toContainText('Essenciais')
+
+  await nav.getByRole('button', { name: 'Fechamento mensal', exact: true }).click()
+  await page.getByLabel('Mês de referência').fill('2024-04')
+  const report = page.getByRole('region', { name: 'Fechamento mensal' })
+  await expect(report).toContainText('Essenciais')
+  await expect(report).toContainText('R$ 32,50')
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('link', { name: 'Exportar extrato do mês' }).click(),
+  ])
+  expect(download.suggestedFilename()).toBe('extrato-auto-finance.csv')
+  await page.setViewportSize({ width: 360, height: 780 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})

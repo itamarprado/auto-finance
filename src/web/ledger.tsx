@@ -3,12 +3,13 @@ import type { FormEvent, ReactNode } from 'react'
 import { currentMonthBounds } from '../domain/date.ts'
 import { formatBrlCents } from '../domain/money.ts'
 import type { LedgerCatalog, Statement } from '../server/database/ledger.ts'
-import { LedgerForm, entryLabels, formLabels, sectionLabels } from './ledger-form.tsx'
+import { LedgerForm, RecordDialog, entryLabels, field, formLabels, sectionLabels } from './ledger-form.tsx'
 import type { LedgerSection } from './ledger-form.tsx'
 import { CashView, InvoicesView } from './financial-view.tsx'
 import { defaultInvoiceRoute, readInvoiceRoute, writeInvoiceRoute } from './invoice-navigation.ts'
 import type { InvoiceRoute } from './invoice-navigation.ts'
 import { formatDate, LedgerError, ledgerRequest } from './ledger-http.ts'
+import { ImportsView, MonthlyView } from './import-view.tsx'
 
 interface Filters {
   from: string
@@ -16,24 +17,30 @@ interface Filters {
   origin: string
   kind: string
   search: string
+  category: string
+  tag: string
   page: number
 }
 
-type Screen = LedgerSection | 'invoices' | 'cash'
-const screenLabels = { ...sectionLabels, invoices: 'Faturas', cash: 'Fluxo de caixa' }
-const symbols = { entries: '≡', holders: '◉', accounts: '▤', cards: '▰', invoices: '▤', cash: '↔' }
-const sections: Screen[] = ['entries', 'invoices', 'cash', 'holders', 'accounts', 'cards']
+type Screen = LedgerSection | 'invoices' | 'cash' | 'imports' | 'monthly'
+const screenLabels = { ...sectionLabels, invoices: 'Faturas', cash: 'Fluxo de caixa', imports: 'Importar CSV', monthly: 'Fechamento mensal' }
+const symbols = { entries: '≡', holders: '◉', accounts: '▤', cards: '▰', invoices: '▤', cash: '↔', imports: '↓', monthly: '▦' }
+const sections: Screen[] = ['entries', 'invoices', 'cash', 'imports', 'monthly', 'holders', 'accounts', 'cards']
+
+function isManualScreen(section: Screen): section is LedgerSection {
+  return Object.hasOwn(formLabels, section)
+}
 
 function initialFilters(): Filters {
   return {
     ...currentMonthBounds(),
-    origin: '', kind: '', search: '', page: 1,
+    origin: '', kind: '', search: '', category: '', tag: '', page: 1,
   }
 }
 
 function statementQuery(filters: Filters): string {
   const query = new URLSearchParams({ page: String(filters.page) })
-  for (const key of ['from', 'to', 'kind', 'search'] as const) {
+  for (const key of ['from', 'to', 'kind', 'search', 'category', 'tag'] as const) {
     if (filters[key]) query.set(key, filters[key])
   }
   if (filters.origin) {
@@ -43,13 +50,16 @@ function statementQuery(filters: Filters): string {
   return query.toString()
 }
 
-function StatementView({ catalog, statement, filters, apply, loading }: {
+function StatementView({ catalog, statement, filters, apply, loading, url, saveLabels }: {
   catalog: LedgerCatalog
   statement: Statement
   filters: Filters
   apply: (filters: Filters) => void
   loading: boolean
+  url: string
+  saveLabels: (record: { id: string; category: string; tags: string[] }) => Promise<void>
 }) {
+  const [editing, setEditing] = useState<Statement['entries'][number] | null>(null)
   const balance = catalog.accounts
     .filter((account) => account.includeInBalance)
     .reduce((total, account) => total + BigInt(account.balanceCents), 0n)
@@ -71,6 +81,8 @@ function StatementView({ catalog, statement, filters, apply, loading }: {
       origin: String(data.get('origin') ?? ''),
       kind: String(data.get('kind') ?? ''),
       search: String(data.get('search') ?? '').trim(),
+      category: field(data, 'category'),
+      tag: field(data, 'tag'),
       page: 1,
     })
   }
@@ -89,6 +101,8 @@ function StatementView({ catalog, statement, filters, apply, loading }: {
         <div className="ledger-section-heading">
           <h2>Movimentações</h2>
           <span>{statement.count} {statement.count === 1 ? 'lançamento' : 'lançamentos'}</span>
+          {statement.count > 0 && statement.count <= 5000 && !loading && <a className="ledger-quiet finance-download"
+            href={`${url}/entries.csv?${statementQuery(filters)}`} download>Exportar CSV</a>}
         </div>
         <form className="ledger-filters" onSubmit={submit}>
           <label>Descrição<input name="search" type="search" maxLength={160} defaultValue={filters.search} placeholder="Buscar lançamento" /></label>
@@ -109,6 +123,8 @@ function StatementView({ catalog, statement, filters, apply, loading }: {
           <label>De<input name="from" type="date" defaultValue={filters.from} /></label>
           <label>Até<input name="to" type="date" defaultValue={filters.to} /></label>
           <button className="ledger-quiet" type="submit" disabled={loading}>Filtrar</button>
+          <label>Categoria<input name="category" maxLength={80} defaultValue={filters.category} /></label>
+          <label>Tag<input name="tag" maxLength={40} defaultValue={filters.tag} /></label>
         </form>
         {statement.entries.length ? (
           <div className="ledger-table-wrap" tabIndex={0} aria-label="Lista de movimentações">
@@ -117,7 +133,12 @@ function StatementView({ catalog, statement, filters, apply, loading }: {
               <tbody role="rowgroup">{statement.entries.map((entry) => (
                 <tr key={`${entry.source}:${entry.id}`} role="row">
                   <td role="cell"><time dateTime={entry.occurredOn}>{formatDate(entry.occurredOn)}</time></td>
-                  <td role="cell"><strong>{entry.description}</strong></td>
+                  <td role="cell">
+                    <strong>{entry.description}</strong>
+                    {(entry.category || entry.tags.length > 0) && <small>{[entry.category, ...entry.tags].filter(Boolean).join(' · ')}</small>}
+                    {entry.source === 'entry' && <button type="button" className="ledger-text-action" aria-label={`Classificar ${entry.description}`}
+                      onClick={() => setEditing(entry)}>Classificar</button>}
+                  </td>
                   <td role="cell">{entry.instrumentName}<small>{entry.holderName}</small></td>
                   <td role="cell"><span className={`ledger-tag ledger-tag-${entry.kind}`}>{entryLabels[entry.kind]}</span></td>
                   <td role="cell" className={`ledger-amount ${entry.kind === 'income' || entry.kind === 'refund' ? 'ledger-positive' : ''}`}>
@@ -134,6 +155,15 @@ function StatementView({ catalog, statement, filters, apply, loading }: {
           <button type="button" className="ledger-quiet" disabled={loading || statement.page >= pages} onClick={() => apply({ ...filters, page: statement.page + 1 })}>Próxima</button>
         </div>}
       </section>
+      {editing && <RecordDialog title="Classificar lançamento" dismiss={() => setEditing(null)} save={async (data) => {
+        await saveLabels({ id: editing.id, category: field(data, 'category'),
+          tags: field(data, 'tags').split('|').map((value) => value.trim()).filter(Boolean) })
+        setEditing(null)
+      }}>
+        <p className="financial-context">{editing.description}</p>
+        <label>Categoria<input name="category" maxLength={80} defaultValue={editing.category ?? ''} /></label>
+        <label>Tags separadas por |<input name="tags" maxLength={500} defaultValue={editing.tags.join(' | ')} /></label>
+      </RecordDialog>}
     </>
   )
 }
@@ -240,7 +270,7 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
   }, [url, query, revision, expireSession])
 
   function openForm() {
-    if (!data || section === 'invoices' || section === 'cash') return
+    if (!data || !isManualScreen(section)) return
     const { catalog } = data
     setNotice('')
     if ((section === 'accounts' || section === 'cards') && !catalog.holders.length) {
@@ -261,9 +291,9 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
     setRevision((previous) => previous + 1)
   }
 
-  async function save(record: object) {
+  async function save(record: object, resource: LedgerSection | 'classifications' | null = form) {
     try {
-      await ledgerRequest(`${url}/${form}`, {
+      await ledgerRequest(`${url}/${resource}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(record),
       })
       setForm(null)
@@ -296,17 +326,20 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
       <main className="finance-main">
         <header className="finance-header">
           <div><p>Espaço ativo: <strong>{workspace.name}</strong></p><h1>{invoiceRoute?.detail ? 'Detalhe da fatura' : screenLabels[section]}</h1></div>
-          {section !== 'invoices' && section !== 'cash' &&
+          {isManualScreen(section) &&
             <button type="button" className="ledger-primary" onClick={openForm} disabled={!data || loading}>{formLabels[section]}</button>}
         </header>
         {notice && <p className="finance-notice" aria-live="polite">{notice}</p>}
         {sessionError && <p className="notice" role="alert">{sessionError}</p>}
         {error && <div className="notice" role="alert">{error} <button className="ledger-quiet" type="button" onClick={() => setRevision((value) => value + 1)}>Tentar novamente</button></div>}
-        {data && section === 'entries' && <StatementView catalog={data.catalog} statement={data.statement} filters={filters} apply={setFilters} loading={loading} />}
+        {data && section === 'entries' && <StatementView catalog={data.catalog} statement={data.statement} filters={filters}
+          apply={setFilters} loading={loading} url={url} saveLabels={(record) => save(record, 'classifications')} />}
         {data && invoiceRoute && <InvoicesView url={url} catalog={data.catalog} revision={revision} saved={saved} expireSession={expireSession}
           route={invoiceRoute} navigate={navigateInvoice} />}
         {data && section === 'cash' && <CashView url={url} catalog={data.catalog} revision={revision} saved={saved} expireSession={expireSession} />}
-        {data && section !== 'entries' && section !== 'invoices' && section !== 'cash' && <CatalogView section={section} catalog={data.catalog} />}
+        {data && section === 'imports' && <ImportsView url={url} catalog={data.catalog} revision={revision} saved={saved} expireSession={expireSession} />}
+        {data && section === 'monthly' && <MonthlyView url={url} revision={revision} expireSession={expireSession} />}
+        {data && isManualScreen(section) && section !== 'entries' && <CatalogView section={section} catalog={data.catalog} />}
         {!data && loading && <p className="ledger-surface ledger-empty">Carregando o espaço financeiro…</p>}
         {data && form && <LedgerForm section={form} catalog={data.catalog} dismiss={() => setForm(null)} save={save} />}
       </main>
