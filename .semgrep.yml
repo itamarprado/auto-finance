@@ -25,3 +25,11 @@ rules:
     severity: ERROR
     message: Mantenha credenciais na configuração do servidor.
     pattern-regex: '(?i)\bVITE_[A-Z0-9_]*(SECRET|PASSWORD|TOKEN|API_KEY|DATABASE_(?:MIGRATION_)?URL)[A-Z0-9_]*\b'
+  - id: auto-finance-prisma-unsafe-sql
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: Use as operações do Prisma Client ou consultas com parâmetros vinculados.
+    pattern-either:
+      - pattern: $CLIENT.$queryRawUnsafe
+      - pattern: $CLIENT.$executeRawUnsafe
+      - pattern: Prisma.raw(...)

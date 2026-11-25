@@ -1,4 +1,5 @@
 import type { Pool } from 'pg'
+import type { PrismaClient } from '../generated/prisma/client.ts'
 
 export interface HolderInput {
   id: string
@@ -65,12 +66,13 @@ export interface Statement {
   pageSize: number
 }
 
-export async function getCatalog(database: Pool, workspaceId: string): Promise<LedgerCatalog> {
+export async function getCatalog(database: Pool, prisma: PrismaClient, workspaceId: string): Promise<LedgerCatalog> {
   const [holders, accounts, cards] = await Promise.all([
-    database.query<LedgerCatalog['holders'][number]>(
-      'SELECT id, name FROM auto_finance.holders WHERE workspace_id = $1 ORDER BY name, id',
-      [workspaceId],
-    ),
+    prisma.holder.findMany({
+      where: { workspaceId },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      select: { id: true, name: true },
+    }),
     database.query<LedgerCatalog['accounts'][number]>(
       `SELECT a.id, a.name, a.kind, a.holder_id AS "holderId",
               a.opening_balance_cents::text AS "openingBalanceCents",
@@ -90,15 +92,20 @@ export async function getCatalog(database: Pool, workspaceId: string): Promise<L
          ORDER BY a.name, a.id`,
       [workspaceId],
     ),
-    database.query<LedgerCatalog['cards'][number]>(
-      `SELECT id, name, holder_id AS "holderId", payment_account_id AS "paymentAccountId",
-              last_four AS "lastFour", limit_cents::text AS "limitCents",
-              closing_day AS "closingDay", due_day AS "dueDay"
-         FROM auto_finance.cards WHERE workspace_id = $1 ORDER BY name, id`,
-      [workspaceId],
-    ),
+    prisma.card.findMany({
+      where: { workspaceId },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true, name: true, holderId: true, paymentAccountId: true,
+        lastFour: true, limitCents: true, closingDay: true, dueDay: true,
+      },
+    }),
   ])
-  return { holders: holders.rows, accounts: accounts.rows, cards: cards.rows }
+  return {
+    holders,
+    accounts: accounts.rows,
+    cards: cards.map((card) => ({ ...card, limitCents: card.limitCents.toString() })),
+  }
 }
 
 const pageSize = 25
@@ -140,44 +147,48 @@ export async function getStatement(database: Pool, workspaceId: string, filter: 
   return { ...result, page, pageSize }
 }
 
-export async function addHolder(database: Pool, workspaceId: string, record: HolderInput): Promise<boolean> {
-  const result = await database.query(
-    'INSERT INTO auto_finance.holders (workspace_id, id, name) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-    [workspaceId, record.id, record.name.trim()],
-  )
-  return result.rowCount === 1
+export async function addHolder(prisma: PrismaClient, workspaceId: string, record: HolderInput): Promise<boolean> {
+  const { count } = await prisma.holder.createMany({
+    data: { workspaceId, id: record.id, name: record.name.trim() },
+    skipDuplicates: true,
+  })
+  return count === 1
 }
 
-export async function addAccount(database: Pool, workspaceId: string, record: AccountInput): Promise<boolean> {
-  const result = await database.query(
-    `INSERT INTO auto_finance.accounts
-       (workspace_id, id, holder_id, name, kind, opening_balance_cents, opening_date, include_in_balance)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING`,
-    [workspaceId, record.id, record.holderId, record.name.trim(), record.kind, record.openingBalanceCents,
-      record.openingDate, record.includeInBalance],
-  )
-  return result.rowCount === 1
+export async function addAccount(prisma: PrismaClient, workspaceId: string, record: AccountInput): Promise<boolean> {
+  const { count } = await prisma.account.createMany({
+    data: {
+      workspaceId, id: record.id, holderId: record.holderId, name: record.name.trim(), kind: record.kind,
+      openingBalanceCents: BigInt(record.openingBalanceCents),
+      openingDate: new Date(`${record.openingDate}T00:00:00Z`),
+      includeInBalance: record.includeInBalance,
+    },
+    skipDuplicates: true,
+  })
+  return count === 1
 }
 
-export async function addCard(database: Pool, workspaceId: string, record: CardInput): Promise<boolean> {
-  const result = await database.query(
-    `INSERT INTO auto_finance.cards
-       (workspace_id, id, holder_id, payment_account_id, name, last_four, limit_cents, closing_day, due_day)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT DO NOTHING`,
-    [workspaceId, record.id, record.holderId, record.paymentAccountId ?? null, record.name.trim(),
-      record.lastFour ?? null, record.limitCents, record.closingDay, record.dueDay],
-  )
-  return result.rowCount === 1
+export async function addCard(prisma: PrismaClient, workspaceId: string, record: CardInput): Promise<boolean> {
+  const { count } = await prisma.card.createMany({
+    data: {
+      workspaceId, id: record.id, holderId: record.holderId, paymentAccountId: record.paymentAccountId ?? null,
+      name: record.name.trim(), lastFour: record.lastFour ?? null, limitCents: BigInt(record.limitCents),
+      closingDay: record.closingDay, dueDay: record.dueDay,
+    },
+    skipDuplicates: true,
+  })
+  return count === 1
 }
 
-export async function addEntry(database: Pool, workspaceId: string, entry: EntryInput): Promise<boolean> {
+export async function addEntry(prisma: PrismaClient, workspaceId: string, entry: EntryInput): Promise<boolean> {
   const card = entry.kind === 'purchase'
-  const result = await database.query(
-    `INSERT INTO auto_finance.ledger_entries
-       (workspace_id, id, kind, account_id, card_id, description, amount_cents, occurred_on)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING`,
-    [workspaceId, entry.id, entry.kind, card ? null : entry.instrumentId, card ? entry.instrumentId : null,
-      entry.description.trim(), entry.amountCents, entry.occurredOn],
-  )
-  return result.rowCount === 1
+  const { count } = await prisma.ledgerEntry.createMany({
+    data: {
+      workspaceId, id: entry.id, kind: entry.kind, accountId: card ? null : entry.instrumentId,
+      cardId: card ? entry.instrumentId : null, description: entry.description.trim(),
+      amountCents: BigInt(entry.amountCents), occurredOn: new Date(`${entry.occurredOn}T00:00:00Z`),
+    },
+    skipDuplicates: true,
+  })
+  return count === 1
 }

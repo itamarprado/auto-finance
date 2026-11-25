@@ -1,0 +1,147 @@
+// PostgreSQL DDL is managed by database/migrations, including CHECK constraints and partial indexes.
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/server/generated/prisma"
+  importFileExtension = "ts"
+  moduleFormat        = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["auto_finance"]
+}
+
+model Account {
+  workspaceId         String                @map("workspace_id") @db.Uuid
+  id                  String                @db.Uuid
+  holderId            String                @map("holder_id") @db.Uuid
+  name                String
+  kind                String
+  openingBalanceCents BigInt                @map("opening_balance_cents")
+  openingDate         DateTime              @map("opening_date") @db.Date
+  includeInBalance    Boolean               @map("include_in_balance")
+  workspace           Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  holder              Holder                @relation(fields: [workspaceId, holderId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  cards               Card[]
+  ledgerEntries       LedgerEntry[]
+
+  @@id([workspaceId, id])
+  @@map("accounts")
+  @@schema("auto_finance")
+}
+
+model AuthSession {
+  tokenHash Bytes    @id @map("token_hash")
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([expiresAt], map: "auth_sessions_expiry_idx")
+  @@index([userId], map: "auth_sessions_user_idx")
+  @@map("auth_sessions")
+  @@schema("auto_finance")
+}
+
+model Card {
+  workspaceId      String                @map("workspace_id") @db.Uuid
+  id               String                @db.Uuid
+  holderId         String                @map("holder_id") @db.Uuid
+  paymentAccountId String?               @map("payment_account_id") @db.Uuid
+  name             String
+  lastFour         String?               @map("last_four")
+  limitCents       BigInt                @map("limit_cents")
+  closingDay       Int                   @map("closing_day")
+  dueDay           Int                   @map("due_day")
+  workspace        Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  holder           Holder                @relation(fields: [workspaceId, holderId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  paymentAccount   Account?              @relation(fields: [workspaceId, paymentAccountId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  ledgerEntries    LedgerEntry[]
+
+  @@id([workspaceId, id])
+  @@map("cards")
+  @@schema("auto_finance")
+}
+
+model Holder {
+  workspaceId String                @map("workspace_id") @db.Uuid
+  id          String                @db.Uuid
+  name        String
+  accounts    Account[]
+  cards       Card[]
+  workspace   Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([workspaceId, id])
+  @@map("holders")
+  @@schema("auto_finance")
+}
+
+model LedgerEntry {
+  workspaceId          String                @map("workspace_id") @db.Uuid
+  id                   String                @db.Uuid
+  accountId            String?               @map("account_id") @db.Uuid
+  cardId               String?               @map("card_id") @db.Uuid
+  kind                 String
+  description          String
+  amountCents          BigInt                @map("amount_cents")
+  occurredOn           DateTime              @map("occurred_on") @db.Date
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  account              Account?              @relation(fields: [workspaceId, accountId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  card                 Card?                 @relation(fields: [workspaceId, cardId], references: [workspaceId, id], onDelete: NoAction, onUpdate: NoAction)
+  workspace            Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([workspaceId, id])
+  @@index([workspaceId, occurredOn(sort: Desc), createdAt(sort: Desc), id(sort: Desc)], map: "ledger_entries_workspace_order_idx")
+  @@map("ledger_entries")
+  @@schema("auto_finance")
+}
+
+model PasswordCredential {
+  userId       String @id @map("user_id") @db.Uuid
+  passwordHash String @map("password_hash")
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("password_credentials")
+  @@schema("auto_finance")
+}
+
+model User {
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  username           String              @unique
+  displayName        String              @map("display_name")
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  authSessions       AuthSession[]
+  passwordCredential PasswordCredential?
+  workspaceMembers   WorkspaceMember[]
+
+  @@map("users")
+  @@schema("auto_finance")
+}
+
+model WorkspaceMember {
+  workspaceId String    @map("workspace_id") @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  role        String
+  joinedAt    DateTime  @default(now()) @map("joined_at") @db.Timestamptz(6)
+  user        User      @relation(fields: [userId], references: [id], onUpdate: NoAction)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([workspaceId, userId])
+  @@index([userId], map: "workspace_members_user_idx")
+  @@map("workspace_members")
+  @@schema("auto_finance")
+}
+
+model Workspace {
+  id               String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String
+  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  accounts         Account[]
+  cards            Card[]
+  holders          Holder[]
+  ledgerEntries    LedgerEntry[]
+  workspaceMembers WorkspaceMember[]
+
+  @@map("workspaces")
+  @@schema("auto_finance")
+}

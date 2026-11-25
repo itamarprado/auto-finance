@@ -7,6 +7,7 @@ import Fastify, { LogController } from 'fastify'
 import pg from 'pg'
 import { registerAccessRoutes } from './auth/routes.ts'
 import type { Config } from './config.ts'
+import { createPrismaClient } from './database/prisma.ts'
 
 export function createApp(config: Config, { serveWeb = false, logger = false } = {}) {
   const app = Fastify({ logger, logController: new LogController({ disableRequestLogging: true }) })
@@ -17,8 +18,15 @@ export function createApp(config: Config, { serveWeb = false, logger = false } =
     max: 5,
   })
 
+  const prisma = createPrismaClient(database)
   database.on('error', () => app.log.warn('Conexão PostgreSQL inativa interrompida.'))
-  app.addHook('onClose', () => database.end())
+  app.addHook('onClose', async () => {
+    try {
+      await prisma.$disconnect()
+    } finally {
+      await database.end()
+    }
+  })
   app.register(cookie)
   app.register(rateLimit, { global: false, hook: 'preHandler' })
   app.register(helmet, {
@@ -47,7 +55,7 @@ export function createApp(config: Config, { serveWeb = false, logger = false } =
     }
   })
 
-  registerAccessRoutes(app, database)
+  registerAccessRoutes(app, database, prisma)
 
   if (serveWeb) {
     app.register(staticFiles, { root: fileURLToPath(new URL('../web/', import.meta.url)) })

@@ -60,7 +60,9 @@ beforeAll(async () => {
   })).statusCode).toBe(201)
 })
 
-afterAll(async () => { await Promise.all([app.close(), migrator.end()]) })
+afterAll(async () => {
+  await Promise.all([app.close(), migrator.end()])
+})
 
 describe('cadastros e extrato', () => {
   it('calcula saldo e totais do filtro com valores exatos, usando titular e origem de cada linha', async () => {
@@ -121,6 +123,22 @@ describe('cadastros e extrato', () => {
       limitCents: 9999, closingDay: 5, dueDay: 10,
     })
     expect(invalidCard.statusCode).toBe(400)
+  })
+
+  it('preserva restrições do banco e trata pontuação nos registros e filtros como texto literal', async () => {
+    expect((await post(owner, 'holders', { id: randomUUID(), name: '   ' })).statusCode).toBe(422)
+
+    const description = "Mercado d'Ávila (10%)"
+    const created = await post(owner, 'entries', {
+      id: randomUUID(), kind: 'expense', instrumentId: accountId, description,
+      amountCents: 1000, occurredOn: '2020-06-01',
+    })
+    expect(created.statusCode).toBe(201)
+
+    const result = await get(owner, `entries?search=${encodeURIComponent("'Ávila (10%)")}`)
+    expect(result.statusCode).toBe(200)
+    expect(result.json()).toMatchObject({ count: 1, entries: [{ description }] })
+    expect((await get(owner, 'entries?search=%25')).json()).toMatchObject({ count: 1 })
   })
 
   it('grava uma vez em reenvios concorrentes e preserva lançamentos legítimos iguais', async () => {
