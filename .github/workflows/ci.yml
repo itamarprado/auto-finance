@@ -89,6 +89,10 @@ jobs:
       - name: Verificar dependências com npm audit
         id: audit
         run: npm run security:deps
+      - name: Validar o modelo e gerar o Prisma Client
+        run: |
+          npm run db:validate
+          npm run db:generate
       - run: npm run lint
         id: lint
       - run: npm run typecheck

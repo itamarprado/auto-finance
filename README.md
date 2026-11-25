@@ -7,7 +7,7 @@ A implementação atual inclui login local e um painel por espaço financeiro. O
 ## Uso local
 
 1. Instale Node.js 24 com npm 11 e prepare PostgreSQL 17. O Docker Compose é uma opção para executar o banco.
-2. Na raiz do projeto, rode `npm ci --ignore-scripts` e copie `.env.example` para `.env` e `.env.migrate.example` para `.env.migrate`.
+2. Na raiz do projeto, rode `npm ci --ignore-scripts` e `npm run db:generate`. Copie `.env.example` para `.env` e `.env.migrate.example` para `.env.migrate`.
 3. Crie o banco dedicado `auto_finance` e prepare os papéis conforme a seção abaixo. Se já houver uma instalação do projeto, preserve o volume existente e reaproveite o mesmo banco.
 4. Em `.env`, aponte `DATABASE_URL` para o banco com o papel `auto_finance_api`. Em `.env.migrate`, aponte `DATABASE_MIGRATION_URL` para o mesmo banco com o papel `auto_finance_migrator`. No Compose, use o endereço `127.0.0.1:54329` e o formato `postgresql://USUARIO:SENHA@127.0.0.1:54329/auto_finance`. Codifique caracteres reservados da senha para URL.
 5. Rode `npm run db:migrate`. Crie a conta inicial com `npm run auth:create-user -- usuario "Nome de exibição" "Espaço pessoal"`. O terminal pede uma senha de 15 a 128 caracteres com entrada mascarada. Cada conta recebe um espaço próprio.
@@ -34,6 +34,10 @@ Na última sessão do `psql`, execute `\password auto_finance_migrator` e `\pass
 O papel de migração é dono dos esquemas da aplicação e do registro de migrações. Ele também é usado pelo comando de criação de conta. O papel da API lê credenciais derivadas e mantém sessões. Os privilégios de esquema e do registro de migrações ficam restritos ao papel de migração. A atualização de uma instalação existente usa `npm run db:migrate`. Reexecutar o comando verifica os checksums das versões aplicadas e aplica apenas as pendentes. Adicione mudanças futuras em um novo arquivo numerado de [database/migrations/](database/migrations).
 
 O comando aplica as migrações pendentes em uma transação. Mantenha as migrações anteriores intactas e deixe o controle da transação com o comando.
+
+O Prisma Client usa o modelo em `prisma/schema.prisma` para acesso tipado ao esquema existente. Ao alterar o esquema, crie uma migração SQL, aplique em uma base descartável, atualize o modelo e rode `npm run db:validate` e `npm run db:generate`. Para introspecção, configure `PRISMA_INTROSPECTION_URL` somente no processo que consulta a base descartável e revise o resultado de `npm exec -- prisma db pull`. Os comandos que alteram o esquema continuam sob responsabilidade de `npm run db:migrate`.
+
+Na próxima atualização da CLI do Prisma, verifique se `@prisma/config` já usa uma versão corrigida de `effect` antes de remover o override no `package.json`. [Aviso de segurança](https://github.com/Effect-TS/effect/security/advisories/GHSA-7589-6fvf-x4pw)
 
 ### Credenciais
 

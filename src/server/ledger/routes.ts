@@ -4,6 +4,8 @@ import type { sessionUser } from '../auth/sessions.ts'
 import { addAccount, addCard, addEntry, addHolder, getCatalog, getStatement } from '../database/ledger.ts'
 import type { AccountInput, CardInput, EntryFilter, EntryInput, HolderInput } from '../database/ledger.ts'
 import { findWorkspace } from '../database/workspaces.ts'
+import { Prisma } from '../generated/prisma/client.ts'
+import type { PrismaClient } from '../generated/prisma/client.ts'
 
 interface WorkspaceParams {
   workspaceId: string
@@ -49,14 +51,18 @@ async function save(reply: FastifyReply, id: string, write: () => Promise<boolea
     if (await write()) return reply.code(201).send({ id })
     return reply.code(409).send({ message: 'O registro já foi recebido. Confira a lista antes de enviar novamente.' })
   } catch (error) {
-    const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
-    if (code === '23503') return reply.code(422).send({ message: 'Selecione um vínculo deste espaço financeiro.' })
-    if (code === '23514') return reply.code(422).send({ message: 'Confira os campos do registro.' })
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2003') return reply.code(422).send({ message: 'Selecione um vínculo deste espaço financeiro.' })
+      const adapterError = error.meta?.driverAdapterError as { cause?: { originalCode?: string } } | undefined
+      if (error.code === 'P2004' || (error.code === 'P2039' && adapterError?.cause?.originalCode === '23514')) {
+        return reply.code(422).send({ message: 'Confira os campos do registro.' })
+      }
+    }
     throw error
   }
 }
 
-export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, requireUser: RequireUser): void {
+export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, prisma: PrismaClient, requireUser: RequireUser): void {
   routes.register(async (ledger) => {
     ledger.addHook('preHandler', async (request, reply) => {
       const user = await requireUser(request, reply)
@@ -69,7 +75,7 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, re
 
     ledger.get<{ Params: WorkspaceParams }>('/ledger/catalog', {
       schema: { params: workspaceParamsSchema },
-    }, (request) => getCatalog(database, request.params.workspaceId))
+    }, (request) => getCatalog(database, prisma, request.params.workspaceId))
 
     ledger.get<{ Params: WorkspaceParams; Querystring: EntryFilter }>('/ledger/entries', {
       schema: {
@@ -93,7 +99,7 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, re
 
     ledger.post<{ Params: WorkspaceParams; Body: HolderInput }>('/ledger/holders',
       bodySchema({ id: uuid, name }, ['id', 'name']),
-      (request, reply) => save(reply, request.body.id, () => addHolder(database, request.params.workspaceId, request.body)))
+      (request, reply) => save(reply, request.body.id, () => addHolder(prisma, request.params.workspaceId, request.body)))
 
     ledger.post<{ Params: WorkspaceParams; Body: AccountInput }>('/ledger/accounts',
       bodySchema({
@@ -103,7 +109,7 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, re
       }, ['id', 'holderId', 'name', 'kind', 'openingBalanceCents', 'openingDate', 'includeInBalance']),
       async (request, reply) => {
         if (!validDate(request.body.openingDate)) return invalidDate(reply)
-        return save(reply, request.body.id, () => addAccount(database, request.params.workspaceId, request.body))
+        return save(reply, request.body.id, () => addAccount(prisma, request.params.workspaceId, request.body))
       })
 
     ledger.post<{ Params: WorkspaceParams; Body: CardInput }>('/ledger/cards',
@@ -112,7 +118,7 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, re
         lastFour: { type: 'string', pattern: '^[0-9]{4}$' },
         limitCents: { ...money, minimum: 0 }, closingDay: day, dueDay: day,
       }, ['id', 'holderId', 'name', 'limitCents', 'closingDay', 'dueDay']),
-      (request, reply) => save(reply, request.body.id, () => addCard(database, request.params.workspaceId, request.body)))
+      (request, reply) => save(reply, request.body.id, () => addCard(prisma, request.params.workspaceId, request.body)))
 
     ledger.post<{ Params: WorkspaceParams; Body: EntryInput }>('/ledger/entries',
       bodySchema({
@@ -122,7 +128,7 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, re
       }, ['id', 'kind', 'instrumentId', 'description', 'amountCents', 'occurredOn']),
       async (request, reply) => {
         if (!validDate(request.body.occurredOn)) return invalidDate(reply)
-        return save(reply, request.body.id, () => addEntry(database, request.params.workspaceId, request.body))
+        return save(reply, request.body.id, () => addEntry(prisma, request.params.workspaceId, request.body))
       })
   }, { prefix: '/api/workspaces/:workspaceId' })
 }

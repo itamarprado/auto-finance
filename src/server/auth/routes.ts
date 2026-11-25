@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Pool } from 'pg'
 import { findWorkspace, listWorkspaces } from '../database/workspaces.ts'
+import type { PrismaClient } from '../generated/prisma/client.ts'
 import { registerLedgerRoutes, workspaceParamsSchema } from '../ledger/routes.ts'
 import { openSession, revokeSession, sessionLifetimeSeconds, sessionUser } from './sessions.ts'
 
@@ -20,7 +21,7 @@ function cookieOptions(request: FastifyRequest) {
   return { path: '/api', httpOnly: true, sameSite: 'strict' as const, secure: request.protocol === 'https' }
 }
 
-export function registerAccessRoutes(app: FastifyInstance, database: Pool): void {
+export function registerAccessRoutes(app: FastifyInstance, database: Pool, prisma: PrismaClient): void {
   app.register(async (routes) => {
     routes.addHook('onRequest', async (request, reply) => {
       reply.header('Cache-Control', 'no-store')
@@ -83,6 +84,6 @@ export function registerAccessRoutes(app: FastifyInstance, database: Pool): void
       return workspace
     })
 
-    registerLedgerRoutes(routes, database, requireUser)
+    registerLedgerRoutes(routes, database, prisma, requireUser)
   })
 }
