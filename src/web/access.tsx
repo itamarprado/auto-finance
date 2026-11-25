@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Ledger } from './ledger.tsx'
+import { readInvoiceRoute, writeInvoiceRoute } from './invoice-navigation.ts'
 
 interface Workspace {
   id: string
@@ -22,6 +23,10 @@ async function readSession(signal?: AbortSignal): Promise<Session | null> {
   return response.json() as Promise<Session>
 }
 
+function workspaceFromRoute(session: Session | null): Workspace | null {
+  return session?.workspaces.find(({ id }) => id === readInvoiceRoute()?.workspaceId) ?? null
+}
+
 export function Access({ databaseStatus }: { databaseStatus: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
@@ -38,7 +43,11 @@ export function Access({ databaseStatus }: { databaseStatus: ReactNode }) {
   useEffect(() => {
     const controller = new AbortController()
     readSession(controller.signal)
-      .then((result) => { if (!controller.signal.aborted) setSession(result) })
+      .then((result) => {
+        if (controller.signal.aborted) return
+        setSession(result)
+        setActiveWorkspace(workspaceFromRoute(result))
+      })
       .catch(() => { if (!controller.signal.aborted) setError('Não foi possível verificar a sessão.') })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
@@ -68,6 +77,7 @@ export function Access({ databaseStatus }: { databaseStatus: ReactNode }) {
       const current = await readSession()
       if (!current) throw new Error('Sessão não iniciada')
       setSession(current)
+      setActiveWorkspace(workspaceFromRoute(current))
     } catch {
       setError('Não foi possível entrar. Confira a conexão e tente novamente.')
     } finally {
@@ -83,6 +93,7 @@ export function Access({ databaseStatus }: { databaseStatus: ReactNode }) {
     try {
       const response = await fetch('/api/auth/logout', { method: 'POST' })
       if (!response.ok) throw new Error('Falha no logout')
+      if (readInvoiceRoute()) writeInvoiceRoute(null, 'replace')
       setSession(null)
       setActiveWorkspace(null)
     } catch {
@@ -108,6 +119,8 @@ export function Access({ databaseStatus }: { databaseStatus: ReactNode }) {
       }
       if (!response.ok) throw new Error('Falha ao abrir o espaço')
       const details = await response.json() as Workspace
+      const invoiceRoute = readInvoiceRoute()
+      if (invoiceRoute && invoiceRoute.workspaceId !== details.id) writeInvoiceRoute(null, 'replace')
       setActiveWorkspace(details)
     } catch {
       setError('Não foi possível abrir o espaço financeiro.')
@@ -118,9 +131,14 @@ export function Access({ databaseStatus }: { databaseStatus: ReactNode }) {
 
   if (session && activeWorkspace) {
     return <Ledger
+      key={activeWorkspace.id}
       workspace={activeWorkspace}
       databaseStatus={databaseStatus}
-      chooseWorkspace={() => { setActiveWorkspace(null); setError('') }}
+      chooseWorkspace={() => {
+        if (readInvoiceRoute()) writeInvoiceRoute(null, 'replace')
+        setActiveWorkspace(null)
+        setError('')
+      }}
       logout={() => { void logout() }}
       expireSession={expireSession}
       sessionError={error}

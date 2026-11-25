@@ -301,10 +301,43 @@ body:has(.finance-shell) {
   font: inherit;
 }
 .financial-controls label:first-child { flex: 0 1 16rem; }
+.invoice-period label { flex: 0 1 10rem; }
+.invoice-period label:first-child { flex-basis: 10rem; }
 .financial-controls .ledger-primary { margin-inline-start: auto; }
-.invoice-list { margin-bottom: 1rem; }
-.invoice-select { text-align: start; white-space: normal; overflow-wrap: anywhere; }
-.invoice-select[aria-pressed='true'] { background: #e5f3eb; border-color: #258676; color: #1a5b4b; }
+.invoice-groups { display: grid; gap: .85rem; }
+.invoice-group h2, .invoice-identity p { margin: 0; }
+.invoice-group-toggle, .invoice-cycle-button {
+  width: 100%;
+  padding: .85rem 1rem;
+  border: 0;
+  border-radius: .65rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.invoice-group-toggle { display: flex; justify-content: space-between; align-items: center; gap: .75rem; font-size: 1rem; font-weight: 700; }
+.invoice-group-toggle::after { content: '+'; margin-inline-start: .15rem; }
+.invoice-group-toggle[aria-expanded='true']::after { content: '−'; }
+.invoice-count { margin-inline-start: auto; flex: none; }
+.invoice-group-toggle small, .invoice-cycle-button small { display: block; }
+.invoice-group-toggle small, .invoice-cycle-button small, .invoice-count, .invoice-identity p { color: var(--fin-muted); font-size: .82rem; font-weight: 400; }
+.invoice-group-toggle:hover, .invoice-cycle-button:hover { background: #eaf4f2; }
+.invoice-cycle-list { list-style: none; margin: 0; padding: 0; }
+.invoice-cycle-list li { border-top: 1px solid var(--fin-border); }
+.invoice-cycle-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, .75fr) minmax(0, .8fr);
+  align-items: center;
+  gap: .4rem .75rem;
+  font-size: .88rem;
+}
+.invoice-cycle-button span:last-child { text-align: end; }
+.invoice-back { margin-bottom: .9rem; }
+.invoice-identity { min-width: 0; overflow-wrap: anywhere; }
+.invoice-identity p { margin-top: .32rem; }
 .financial-values { display: grid; gap: .38rem .9rem; margin: .45rem 0 0; }
 .financial-values div { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .2rem .75rem; }
 .financial-values dt { color: var(--fin-muted); font-size: .8rem; }
@@ -334,7 +367,11 @@ body:has(.finance-shell) {
 @container (max-width: 34rem) {
   .ledger-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .financial-controls label:first-child { flex-basis: 100%; }
+  .invoice-period label:first-child { flex-basis: 10rem; }
   .financial-controls .ledger-primary { margin-inline-start: 0; }
+  .invoice-cycle-button { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .invoice-cycle-button span:nth-child(2) { grid-column: 1; grid-row: 2; }
+  .invoice-cycle-button span:last-child { grid-column: 2; grid-row: 1 / span 2; }
   .ledger-table, .ledger-table tbody { display: block; min-width: 0; }
 
   .ledger-table thead {

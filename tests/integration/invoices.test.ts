@@ -72,6 +72,7 @@ it('concilia compra antiga, pagamento parcial, estornos e transferência entre c
     summaries: [{ chargeCents: '60000', paidCents: '25000', openCents: '35000', closingOn: '2024-01-25', dueOn: '2024-02-08' }],
     detail: { charges: [{ id: chargeId, source: 'purchase' }], adjustments: [{ id: payment.id, reversed: false }] },
   })
+  expect((await get('invoice-cycles?from=2024-01-01&to=2024-01-01')).json()).toEqual(afterPayment.json().summaries)
   const overpayments = await Promise.all([1, 2].map(() =>
     post('payments', { ...payment, id: randomUUID(), amountCents: 30000 })))
   expect(overpayments.map((response) => response.statusCode).sort()).toEqual([201, 422])
@@ -143,6 +144,19 @@ it('ajusta o fechamento no mês curto e mostra crédito quando um estorno chega 
   expect((await get(path)).json().summaries).toEqual(expect.arrayContaining([
     expect.objectContaining({ cardId: shortMonthCard, openCents: '0', creditCents: '700' }),
   ]))
+  const history = 'invoice-cycles?from=2024-02-01&to=2024-04-01'
+  const listed = await get(history)
+  expect(listed.statusCode).toBe(200)
+  expect(listed.json()).toHaveLength(4)
+  expect(listed.json().filter((cycle: { cardId: string }) => cycle.cardId === cardId)).toMatchObject([
+    { cycleMonth: '2024-04-01' }, { cycleMonth: '2024-03-01' }, { cycleMonth: '2024-02-01' },
+  ])
+  expect(listed.json()).toEqual(expect.arrayContaining([
+    expect.objectContaining({ cardId: shortMonthCard, cycleMonth: '2024-02-01', creditCents: '700' }),
+  ]))
+  expect((await get(history, outsider)).json()).toEqual([])
+  expect((await get(history, { url: owner.url, headers: outsider.headers })).statusCode).toBe(404)
+  expect((await get('invoice-cycles?from=2020-01-01&to=2025-01-01')).statusCode).toBe(422)
   expect((await get('cash?from=2024-03-01&to=2024-03-31')).json())
     .toMatchObject({ count: 1, paidCents: '5000', netCents: '-5000' })
 })
