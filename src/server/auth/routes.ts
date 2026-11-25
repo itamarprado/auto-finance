@@ -43,7 +43,7 @@ export function registerAccessRoutes(app: FastifyInstance, database: Pool, prism
     })
 
     async function requireUser(request: FastifyRequest, reply: FastifyReply) {
-      const user = await sessionUser(database, request.cookies[sessionCookie])
+      const user = await sessionUser(prisma, request.cookies[sessionCookie])
       if (!user) reply.code(401).send({ message: 'Entre para acessar os espaços financeiros.' })
       return user
     }
@@ -54,7 +54,7 @@ export function registerAccessRoutes(app: FastifyInstance, database: Pool, prism
       config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
     }, async (request, reply) => {
       const { username, password } = request.body
-      const token = await openSession(database, username, password, request.cookies[sessionCookie])
+      const token = await openSession(prisma, username, password, request.cookies[sessionCookie])
       if (!token) return reply.code(401).send({ message: 'Usuário ou senha inválidos.' })
 
       return reply
@@ -64,14 +64,14 @@ export function registerAccessRoutes(app: FastifyInstance, database: Pool, prism
     })
 
     routes.post('/api/auth/logout', async (request, reply) => {
-      await revokeSession(database, request.cookies[sessionCookie])
+      await revokeSession(prisma, request.cookies[sessionCookie])
       return reply.clearCookie(sessionCookie, cookieOptions(request)).code(204).send()
     })
 
     routes.get('/api/auth/session', async (request, reply) => {
       const user = await requireUser(request, reply)
       if (!user) return reply
-      return { user, workspaces: await listWorkspaces(database, user.id) }
+      return { user, workspaces: await listWorkspaces(prisma, user.id) }
     })
 
     routes.get<{ Params: { workspaceId: string } }>('/api/workspaces/:workspaceId', {
@@ -79,7 +79,7 @@ export function registerAccessRoutes(app: FastifyInstance, database: Pool, prism
     }, async (request, reply) => {
       const user = await requireUser(request, reply)
       if (!user) return reply
-      const workspace = await findWorkspace(database, user.id, request.params.workspaceId)
+      const workspace = await findWorkspace(prisma, user.id, request.params.workspaceId)
       if (!workspace) return reply.code(404).send({ message: 'Espaço financeiro não encontrado.' })
       return workspace
     })

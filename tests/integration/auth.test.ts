@@ -1,10 +1,11 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import pg from 'pg'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { createApp } from '../../src/server/app.ts'
 import { createLocalAccount } from '../../src/server/auth/accounts.ts'
 import { readConfig, readPostgresUrl } from '../../src/server/config.ts'
 import { applyMigrations, loadMigrations } from '../../src/server/database/migrations.ts'
+import { createPrismaClient } from '../../src/server/database/prisma.ts'
 
 const config = readConfig({ DATABASE_URL: process.env.TEST_DATABASE_URL })
 const migrator = new pg.Pool({
@@ -13,6 +14,7 @@ const migrator = new pg.Pool({
     'DATABASE_MIGRATION_URL',
   ),
 })
+const provisioning = createPrismaClient(migrator)
 const local = { host: '127.0.0.1:3107', origin: 'http://127.0.0.1:3107' }
 const fixturePassword = 'frase sintética de autenticação'
 const firstUsername = `fixture_${randomUUID().replaceAll('-', '')}`
@@ -26,10 +28,10 @@ beforeAll(async () => {
   const migrations = await loadMigrations(new URL('../../database/migrations/', import.meta.url))
   await applyMigrations(migrator, migrations)
   const [owner, other] = await Promise.all([
-    createLocalAccount(migrator, {
+    createLocalAccount(provisioning, {
       username: firstUsername, displayName: 'Pessoa de teste', workspaceName: 'Espaço de teste', password: fixturePassword,
     }),
-    createLocalAccount(migrator, {
+    createLocalAccount(provisioning, {
       username: secondUsername, displayName: 'Outra pessoa', workspaceName: 'Outro espaço', password: fixturePassword,
     }),
   ])
@@ -41,7 +43,10 @@ afterEach(async () => {
   await app?.close()
   app = undefined
 })
-afterAll(async () => { await migrator.end() })
+afterAll(async () => {
+  await provisioning.$disconnect()
+  await migrator.end()
+})
 
 function login(server: ReturnType<typeof createApp>, username = firstUsername, password = fixturePassword) {
   return server.inject({ method: 'POST', url: '/api/auth/login', headers: local, payload: { username, password } })
@@ -56,9 +61,9 @@ function cookieHeader(response: Awaited<ReturnType<typeof login>>): string {
 describe('acesso local', () => {
   it('reverte a criação da conta se o espaço inicial não for válido', async () => {
     const username = `fixture_${randomUUID().replaceAll('-', '')}`
-    await expect(createLocalAccount(migrator, {
+    await expect(createLocalAccount(provisioning, {
       username, displayName: 'Pessoa de teste', workspaceName: '', password: fixturePassword,
-    })).rejects.toMatchObject({ code: '23514' })
+    })).rejects.toMatchObject({ meta: { driverAdapterError: { cause: { originalCode: '23514' } } } })
     const result = await migrator.query('SELECT id FROM auto_finance.users WHERE username = $1', [username])
     expect(result.rowCount).toBe(0)
   })
@@ -174,6 +179,24 @@ describe('acesso local', () => {
     )
     const expired = await app.inject({ url: '/api/auth/session', headers: { ...local, cookie } })
     expect(expired.statusCode).toBe(401)
+  })
+
+  it('reconhece e revoga uma sessão gravada antes da adoção do Prisma', async () => {
+    const token = randomBytes(32).toString('base64url')
+    const digest = createHash('sha256').update(token).digest()
+    await migrator.query(
+      `INSERT INTO auto_finance.auth_sessions (token_hash, user_id, expires_at)
+       VALUES ($1, $2, CURRENT_TIMESTAMP + interval '1 hour')`,
+      [digest, first.userId],
+    )
+    app = createApp(config)
+    const headers = { ...local, cookie: `auto_finance_session=${token}` }
+    const active = await app.inject({ url: '/api/auth/session', headers })
+    expect(active.statusCode).toBe(200)
+    expect(active.json()).toMatchObject({ user: { id: first.userId } })
+    const logout = await app.inject({ method: 'POST', url: '/api/auth/logout', headers })
+    expect(logout.statusCode).toBe(204)
+    expect((await app.inject({ url: '/api/auth/session', headers })).statusCode).toBe(401)
   })
 
   it('limita as tentativas de login por origem de rede', async () => {
