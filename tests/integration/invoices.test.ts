@@ -6,6 +6,7 @@ import { createLocalAccount } from '../../src/server/auth/accounts.ts'
 import { readConfig, readPostgresUrl } from '../../src/server/config.ts'
 import { applyMigrations, loadMigrations } from '../../src/server/database/migrations.ts'
 import { createPrismaClient } from '../../src/server/database/prisma.ts'
+import { addDays, todayInBrasilia } from '../../src/server/ledger/recurrence-calendar.ts'
 
 const migrator = new pg.Pool({
   connectionString: readPostgresUrl({ DATABASE_MIGRATION_URL: process.env.TEST_DATABASE_MIGRATION_URL }, 'DATABASE_MIGRATION_URL'),
@@ -55,6 +56,59 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma.$disconnect()
   await Promise.all([app.close(), migrator.end()])
+})
+
+it('projeta por conta o restante da fatura, lançamentos futuros e recorrências sem duplicar compras', async () => {
+  const workspace = await fixture('Projeção isolada')
+  const holderId = randomUUID()
+  const paying = randomUUID()
+  const card = randomUUID()
+  const today = todayInBrasilia()
+  const tomorrow = addDays(today, 1)
+  const end = addDays(today, 70)
+  const write = async (resource: string, payload: object) => {
+    const response = await post(resource, payload, workspace)
+    expect(response.statusCode, response.body).toBe(201)
+  }
+  await write('holders', { id: holderId, name: 'Titular da projeção' })
+  await write('accounts', { id: paying, name: 'Conta da projeção', holderId, kind: 'bank',
+    openingBalanceCents: 50000, openingDate: '2023-01-01', includeInBalance: true })
+  await write('cards', { id: card, name: 'Cartão da projeção', holderId, limitCents: 90000,
+    closingDay: 25, dueDay: 8, paymentAccountId: paying })
+  const purchase = randomUUID()
+  await write('entries', { id: purchase, kind: 'purchase', instrumentId: card,
+    description: 'Compra vinculada', amountCents: 10000, occurredOn: '2024-01-05' })
+  await write('payments', { id: randomUUID(), cardId: card, cycleMonth, accountId: paying,
+    amountCents: 4000, occurredOn: '2024-01-10' })
+  await write('entries', { id: randomUUID(), kind: 'income', instrumentId: paying,
+    description: 'Receita futura registrada', amountCents: 2000, occurredOn: tomorrow })
+  const income = randomUUID()
+  await write('entries', { id: income, kind: 'income', instrumentId: paying,
+    description: 'Receita conciliada', amountCents: 2000, occurredOn: today })
+  const linked = randomUUID()
+  await write('recurrences', { id: linked, name: 'Receita recorrente', kind: 'income', cadence: 'yearly',
+    startsOn: today, endsOn: null, amountCents: 2000, accountId: paying, cardId: null, active: true })
+  await write('recurrence-occurrences', { id: linked, scheduledOn: today, action: 'link', entryId: income })
+  const recurring = { cadence: 'yearly', startsOn: tomorrow, endsOn: null, active: true, cardId: null }
+  await write('recurrences', { ...recurring, id: randomUUID(), name: 'Internet prevista', kind: 'expense',
+    amountCents: 1500, accountId: paying })
+  await write('recurrences', { ...recurring, id: randomUUID(), name: 'Sem conta', kind: 'expense',
+    amountCents: 400, accountId: null })
+
+  const resource = `balance-projection?to=${end}`
+  const response = await get(resource, workspace)
+  expect(response.statusCode, response.body).toBe(200)
+  expect(response.json()).toMatchObject({
+    today, to: end, unassigned: [{ description: 'Sem conta', cents: '-400' }],
+    accounts: [{ id: paying, initialCents: '48000', projectedCents: '42500', timeline: [
+      { on: today, balanceCents: '42000', movements: [{ source: 'invoice', dueOn: '2024-02-08', cents: '-6000' }] },
+      { on: tomorrow, balanceCents: '42500', movements: [
+        { source: 'recorded', cents: '2000' }, { source: 'recurrence', cents: '-1500' },
+      ] },
+    ] }],
+  })
+  expect((await get(resource, { ...workspace, headers: outsider.headers })).statusCode).toBe(404)
+  expect((await get(`balance-projection?to=${addDays(today, 93)}`, workspace)).statusCode).toBe(422)
 })
 
 it('concilia compra antiga, pagamento parcial, estornos e transferência entre contas sem somar duas vezes', async () => {
