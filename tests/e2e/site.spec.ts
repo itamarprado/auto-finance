@@ -6,6 +6,7 @@ import { createLocalAccount } from '../../src/server/auth/accounts.ts'
 import { readPostgresUrl } from '../../src/server/config.ts'
 import { applyMigrations, loadMigrations } from '../../src/server/database/migrations.ts'
 import { createPrismaClient } from '../../src/server/database/prisma.ts'
+import { addDays, todayInBrasilia } from '../../src/server/ledger/recurrence-calendar.ts'
 
 test('o build web abre e confirma a conexão real com o PostgreSQL', async ({ page }) => {
   await page.goto('/')
@@ -146,6 +147,15 @@ test('cadastra titular, conta e cartão pela interface e filtra movimentações 
   await expect(amount).toBeVisible()
   const amountBox = await amount.boundingBox()
   expect(amountBox!.x + amountBox!.width).toBeLessThanOrEqual(360)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+
+  await nav.getByRole('button', { name: 'Projeção de saldo', exact: true }).click()
+  await page.getByLabel('Projetar até').fill(addDays(todayInBrasilia(), 70))
+  await page.getByRole('button', { name: 'Atualizar projeção' }).click()
+  const projected = page.getByRole('region', { name: 'Saldo da conta' })
+  await expect(projected).toContainText('R$ 690,10')
+  await expect(projected).toContainText('R$ 669,60')
+  await expect(projected.getByText(/Fatura de Cartão de teste/)).toHaveCount(1)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
 

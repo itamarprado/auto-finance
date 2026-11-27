@@ -13,6 +13,7 @@ import { ImportsView, MonthlyView } from './import-view.tsx'
 import { SplitsView } from './splits-view.tsx'
 import { RecurrencesView } from './recurrences-view.tsx'
 import { ExpenseForecastView } from './expense-forecast-view.tsx'
+import { BalanceProjectionView } from './balance-projection-view.tsx'
 
 interface Filters {
   from: string
@@ -25,12 +26,13 @@ interface Filters {
   page: number
 }
 
-type Screen = LedgerSection | 'invoices' | 'cash' | 'imports' | 'monthly' | 'splits' | 'recurrences' | 'forecast'
+type Screen = LedgerSection | 'invoices' | 'cash' | 'imports' | 'monthly' | 'splits' | 'recurrences' | 'forecast' | 'projection'
 const screenLabels = { ...sectionLabels, invoices: 'Faturas', cash: 'Fluxo de caixa', imports: 'Importar CSV',
-  monthly: 'Fechamento mensal', splits: 'Rateios e acertos', recurrences: 'Assinaturas e recorrências', forecast: 'Previsão de gastos' }
+  monthly: 'Fechamento mensal', splits: 'Rateios e acertos', recurrences: 'Assinaturas e recorrências', forecast: 'Previsão de gastos',
+  projection: 'Projeção de saldo' }
 const symbols = { entries: '≡', holders: '◉', accounts: '▤', cards: '▰', invoices: '▤', cash: '↔',
-  imports: '↓', monthly: '▦', splits: '÷', recurrences: '↻', forecast: '◷' }
-const sections: Screen[] = ['entries', 'invoices', 'cash', 'splits', 'recurrences', 'forecast', 'imports', 'monthly', 'holders', 'accounts', 'cards']
+  imports: '↓', monthly: '▦', splits: '÷', recurrences: '↻', forecast: '◷', projection: '↗' }
+const sections: Screen[] = ['entries', 'invoices', 'cash', 'splits', 'recurrences', 'forecast', 'projection', 'imports', 'monthly', 'holders', 'accounts', 'cards']
 const incomingKinds = new Set(['income', 'refund', 'reimbursement_in'])
 
 function isManualScreen(section: Screen): section is LedgerSection {
@@ -350,6 +352,7 @@ export function Ledger({ workspace, databaseStatus, chooseWorkspace, logout, exp
         {data && section === 'splits' && <SplitsView url={url} catalog={data.catalog} revision={revision} saved={saved} expireSession={expireSession} />}
         {data && section === 'recurrences' && <RecurrencesView url={url} catalog={data.catalog} revision={revision} saved={saved} expireSession={expireSession} />}
         {data && section === 'forecast' && <ExpenseForecastView url={url} catalog={data.catalog} revision={revision} saved={saved} expireSession={expireSession} />}
+        {data && section === 'projection' && <BalanceProjectionView url={url} revision={revision} expireSession={expireSession} />}
         {data && isManualScreen(section) && section !== 'entries' && <CatalogView section={section} catalog={data.catalog} />}
         {!data && loading && <p className="ledger-surface ledger-empty">Carregando o espaço financeiro…</p>}
         {data && form && <LedgerForm section={form} catalog={data.catalog} dismiss={() => setForm(null)} save={save} />}

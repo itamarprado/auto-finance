@@ -156,7 +156,7 @@ function toSummary({ today, ...row }: InvoiceTotals): InvoiceSummary {
     creditCents: String(balance < 0n ? -balance : 0n) }
 }
 
-export async function listInvoiceCycles(prisma: PrismaClient, workspaceId: string, from: string, to: string) {
+export async function listInvoiceCycles(prisma: Prisma.TransactionClient, workspaceId: string, from: string, to: string) {
   return (await getTotals(prisma, workspaceId, from, to)).map(toSummary)
 }
 

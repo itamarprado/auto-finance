@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Pool } from 'pg'
 import type { sessionUser } from '../auth/sessions.ts'
+import { balanceProjection } from '../database/balance-projection.ts'
 import { getCash } from '../database/cash.ts'
 import type { CashFilter } from '../database/cash.ts'
 import { addInstallment, addPayment, addRefund, addTransfer, FinancialInputError, getInvoices, listInvoiceCycles, reversePayment } from '../database/invoices.ts'
@@ -16,6 +17,7 @@ import { Prisma } from '../generated/prisma/client.ts'
 import type { PrismaClient } from '../generated/prisma/client.ts'
 import { classification, csvCell, privacyText } from './import-csv.ts'
 import { registerImportRoutes } from './import-routes.ts'
+import { addDays, todayInBrasilia } from './recurrence-calendar.ts'
 
 interface WorkspaceParams {
   workspaceId: string
@@ -289,6 +291,20 @@ export function registerLedgerRoutes(routes: FastifyInstance, database: Pool, pr
       const { from, to } = request.query
       if (!validDate(from) || !validDate(to) || from > to) return invalidDate(reply)
       return getCash(prisma, request.params.workspaceId, request.query)
+    })
+
+    ledger.get<{ Params: WorkspaceParams; Querystring: { to: string } }>('/ledger/balance-projection', {
+      schema: { params: workspaceParamsSchema, querystring: {
+        type: 'object', required: ['to'], additionalProperties: false, properties: { to: date },
+      } },
+    }, ({ params, query }, reply) => {
+      const today = todayInBrasilia()
+      const horizonDays = 92
+      if (!validDate(query.to)) return invalidDate(reply)
+      if (query.to < today || query.to > addDays(today, horizonDays)) {
+        return reply.code(422).send({ message: `Escolha uma data entre hoje e os próximos ${horizonDays} dias.` })
+      }
+      return balanceProjection(prisma, params.workspaceId, today, query.to)
     })
 
     function registerAdjustment<T extends { id: string; occurredOn: string; cycleMonth?: string; firstCycle?: string }>(

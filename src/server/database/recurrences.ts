@@ -100,63 +100,66 @@ function nextOccurrence(calendar: SeriesCalendar, today: string) {
 }
 
 export async function recurrenceReport(prisma: PrismaClient, workspaceId: string, month: string, view: 'agenda' | 'forecast' = 'agenda') {
+  return prisma.$transaction((transaction) => readRecurrenceReport(transaction, workspaceId, month, view),
+    { isolationLevel: 'RepeatableRead' })
+}
+
+export async function readRecurrenceReport(transaction: Prisma.TransactionClient, workspaceId: string, month: string,
+  view: 'agenda' | 'forecast' = 'agenda', today = todayInBrasilia()) {
   const last = monthEnd(month)
-  const today = todayInBrasilia()
   const now = sqlDate(today)
   const from = sqlDate(month)
   const to = sqlDate(last)
-  return prisma.$transaction(async (transaction) => {
-    const series = await transaction.recurringSeries.findMany({
-      where: { workspaceId, kind: view === 'forecast' ? { in: ['expense', 'subscription'] } : undefined },
-      orderBy: [{ name: 'asc' }, { id: 'asc' }],
-    })
-    const versions = partition(await transaction.recurrenceVersion.findMany({
-      where: { workspaceId }, orderBy: { effectiveOn: 'asc' },
-    }))
-    const exceptions = await transaction.recurrenceOccurrence.findMany({ where: { workspaceId, OR: [
-      { scheduledOn: { gte: from, lte: to } }, { expectedOn: { gte: from, lte: to } },
-      { scheduledOn: { gte: now } }, { expectedOn: { gte: now } },
-      { settledOn: { gte: from, lte: to } },
-    ] } })
-    const actualIds = exceptions.flatMap((item) => item.entryId ? [item.entryId] : [])
-    const actuals = new Map((await transaction.ledgerEntry.findMany({
-      where: { workspaceId, id: { in: actualIds } }, select: actualFields,
-    })).map((actual) => [actual.id, actual]))
-    const exceptionsBySeries = partition(exceptions)
-    const occurrences: Occurrence[] = []
-    const overview = series.map((record) => {
-      const calendar: SeriesCalendar = {
-        series: record, versions: versions.get(record.id) ?? [], actuals,
-        exceptions: new Map((exceptionsBySeries.get(record.id) ?? []).map((item) => [dateText(item.scheduledOn), item])),
-      }
-      const startsOn = dateText(record.startsOn)
-      const cadence = record.cadence as Cadence
-      const keys = new Set(calendar.exceptions.keys())
-      let scheduled = nextScheduled(startsOn, cadence, month)
-      while (scheduled && scheduled <= last) {
-        keys.add(scheduled)
-        scheduled = nextScheduled(startsOn, cadence, addDays(scheduled, 1))
-      }
-      for (const key of keys) {
-        const row = occurrence(calendar, key)
-        if (!row || (view === 'forecast' && row.skipped)) continue
-        const date = view === 'forecast' ? row.expectedOn : row.on
-        if (date >= month && date <= last) occurrences.push(row)
-      }
-      const next = nextOccurrence(calendar, today)
-      const terms = versionAt(calendar.versions, today) ?? calendar.versions[0]
-      return {
-        id: record.id, name: record.name, kind: record.kind as Kind, cadence, startsOn, next,
-        groupName: record.groupName, variableAmount: record.variableAmount,
-        changeOn: nextScheduled(startsOn, cadence, today) ?? null,
-        amountCents: terms.amountCents.toString(), accountId: terms.accountId, cardId: terms.cardId,
-        endsOn: terms.endsOn ? dateText(terms.endsOn) : null,
-      }
-    })
-    const sortDate = view === 'forecast' ? 'expectedOn' : 'on'
-    occurrences.sort((a, b) => a[sortDate].localeCompare(b[sortDate]) || a.name.localeCompare(b.name) || a.scheduledOn.localeCompare(b.scheduledOn))
-    return { series: overview, occurrences }
-  }, { isolationLevel: 'RepeatableRead' })
+  const series = await transaction.recurringSeries.findMany({
+    where: { workspaceId, kind: view === 'forecast' ? { in: ['expense', 'subscription'] } : undefined },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
+  })
+  const versions = partition(await transaction.recurrenceVersion.findMany({
+    where: { workspaceId }, orderBy: { effectiveOn: 'asc' },
+  }))
+  const exceptions = await transaction.recurrenceOccurrence.findMany({ where: { workspaceId, OR: [
+    { scheduledOn: { gte: from, lte: to } }, { expectedOn: { gte: from, lte: to } },
+    { scheduledOn: { gte: now } }, { expectedOn: { gte: now } },
+    { settledOn: { gte: from, lte: to } },
+  ] } })
+  const actualIds = exceptions.flatMap((item) => item.entryId ? [item.entryId] : [])
+  const actuals = new Map((await transaction.ledgerEntry.findMany({
+    where: { workspaceId, id: { in: actualIds } }, select: actualFields,
+  })).map((actual) => [actual.id, actual]))
+  const exceptionsBySeries = partition(exceptions)
+  const occurrences: Occurrence[] = []
+  const overview = series.map((record) => {
+    const calendar: SeriesCalendar = {
+      series: record, versions: versions.get(record.id) ?? [], actuals,
+      exceptions: new Map((exceptionsBySeries.get(record.id) ?? []).map((item) => [dateText(item.scheduledOn), item])),
+    }
+    const startsOn = dateText(record.startsOn)
+    const cadence = record.cadence as Cadence
+    const keys = new Set(calendar.exceptions.keys())
+    let scheduled = nextScheduled(startsOn, cadence, month)
+    while (scheduled && scheduled <= last) {
+      keys.add(scheduled)
+      scheduled = nextScheduled(startsOn, cadence, addDays(scheduled, 1))
+    }
+    for (const key of keys) {
+      const row = occurrence(calendar, key)
+      if (!row || (view === 'forecast' && row.skipped)) continue
+      const date = view === 'forecast' ? row.expectedOn : row.on
+      if (date >= month && date <= last) occurrences.push(row)
+    }
+    const next = nextOccurrence(calendar, today)
+    const terms = versionAt(calendar.versions, today) ?? calendar.versions[0]
+    return {
+      id: record.id, name: record.name, kind: record.kind as Kind, cadence, startsOn, next,
+      groupName: record.groupName, variableAmount: record.variableAmount,
+      changeOn: nextScheduled(startsOn, cadence, today) ?? null,
+      amountCents: terms.amountCents.toString(), accountId: terms.accountId, cardId: terms.cardId,
+      endsOn: terms.endsOn ? dateText(terms.endsOn) : null,
+    }
+  })
+  const sortDate = view === 'forecast' ? 'expectedOn' : 'on'
+  occurrences.sort((a, b) => a[sortDate].localeCompare(b[sortDate]) || a.name.localeCompare(b.name) || a.scheduledOn.localeCompare(b.scheduledOn))
+  return { series: overview, occurrences }
 }
 
 export type RecurrenceReport = Awaited<ReturnType<typeof recurrenceReport>>
